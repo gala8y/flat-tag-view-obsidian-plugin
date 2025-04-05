@@ -1,0 +1,11 @@
+{
+  "id": "flat-tag-view",
+  "name": "Flat Tag View",
+  "version": "0.1.0",
+  "minAppVersion": "0.15.0",
+  "description": "Displays tags in a flat, space-separated format with sorting options and search integration",
+  "author": "gala8y (vc /w ai)",
+  "authorUrl": "https://github.com/gala8y",
+  "isDesktopOnly": true
+}
+

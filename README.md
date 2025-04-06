@@ -14,4 +14,4 @@ Displays tags in a flat, space-separated format with sorting options and search 
 - ribbon icon and configurable hotkeys
 - sends selected tags to obsidian search pane
 
-_vc w/ ai_
+_vibe coded w/ ai (claude 3.7 sonnet / 4o)_

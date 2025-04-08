@@ -15,3 +15,6 @@ Displays tags in a flat, space-separated format with sorting options and search 
 - sends selected tags to obsidian search pane
 
 _vibe coded w/ ai (claude 3.7 sonnet / 4o)_
+
+
+_20250408-1709 I added hotkeys functionality somehow hastily late in the night - icons for toggles (show/hide tags used only once, show/hide alphabet letters in a-z sort) do not update when functions are accessed via hotkeys (atm there is simply no code for that)._

@@ -14,11 +14,9 @@ export class FlatTagView extends ItemView {
   private currentSort: "az" | "count" = "az";
   private tagsByFile: Map<string, Set<string>> = new Map();
   
-  private hideSingleUseTags: boolean = false;
   private tagSearchText: string = "";
-  
-  // UNIFIED MODE STATE FOR TASK AND LINE MODES
   private searchMode: "note" | "line" | "task" | "task-todo" | "task-done" = "note";
+  private touchTimer: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: FlatTagPlugin) {
     super(leaf);
@@ -46,32 +44,14 @@ export class FlatTagView extends ItemView {
   
     const sortByAZ = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort A-Z" });
     setIcon(sortByAZ, "lucide-sort-asc");
-    sortByAZ.addEventListener("click", () => {
-      this.currentSort = "az";
-      this.renderTags();
-    });
-  
+    
     const sortByCount = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort by usage" });
     setIcon(sortByCount, "lucide-bar-chart-2");
-    sortByCount.addEventListener("click", () => {
-      this.currentSort = "count";
-      this.renderTags();
-    });
   
     const clearButton = buttonSection.createDiv({ cls: "flat-tag-clear-button", title: "Clear tag selections" });
     setIcon(clearButton, "x");
     clearButton.addEventListener("click", () => {
       this.clearTagSelections();
-    });
-  
-    const toggleSingleUseButton = buttonSection.createDiv({ 
-      cls: "flat-tag-sort-button", 
-      title: "Toggle single-use tags" 
-    });
-    setIcon(toggleSingleUseButton, "eye-off");
-    toggleSingleUseButton.addEventListener("click", () => {
-      this.toggleSingleUseTags();
-      setIcon(toggleSingleUseButton, this.hideSingleUseTags ? "eye" : "eye-off");
     });
 
     // Create Scope Button (Note / Line)
@@ -89,11 +69,16 @@ export class FlatTagView extends ItemView {
     });
 
     const updateModeUI = () => {
-      // Remove active states
+      // Update Sort Buttons Active State
+      sortByAZ.removeClass("is-active");
+      sortByCount.removeClass("is-active");
+      if (this.currentSort === "az") sortByAZ.addClass("is-active");
+      if (this.currentSort === "count") sortByCount.addClass("is-active");
+
+      // Update Mode Buttons Active State
       scopeBtn.removeClass("is-active");
       taskBtn.removeClass("is-active");
       
-      // Update text and active state based on current mode
       if (this.searchMode === "note") {
         scopeBtn.setText("NOTE");
         scopeBtn.addClass("is-active");
@@ -111,7 +96,6 @@ export class FlatTagView extends ItemView {
         taskBtn.addClass("is-active");
       }
       
-      // Maintain the correct text on the inactive button
       if (["note", "line"].includes(this.searchMode)) {
         if (!["TASK-ALL", "TASK-TODO", "TASK-DONE"].includes(taskBtn.innerText)) {
           taskBtn.setText("TASK-ALL");
@@ -123,14 +107,22 @@ export class FlatTagView extends ItemView {
       }
 
       this.updateSearch(); 
-      // Only render tags if the container has actually been created!
       if (this.tagContainer) {
-        this.renderTags(); 
+        this.renderTags();
       }
     };
 
+    // Event Listeners that call updateModeUI
+    sortByAZ.addEventListener("click", () => {
+      this.currentSort = "az";
+      updateModeUI();
+    });
 
-    // Cycle Scope Button Logic
+    sortByCount.addEventListener("click", () => {
+      this.currentSort = "count";
+      updateModeUI();
+    });
+
     scopeBtn.addEventListener("click", () => {
       if (["note", "line"].includes(this.searchMode)) {
         this.searchMode = this.searchMode === "note" ? "line" : "note";
@@ -140,7 +132,6 @@ export class FlatTagView extends ItemView {
       updateModeUI();
     });
     
-    // Cycle Task Button Logic
     taskBtn.addEventListener("click", () => {
       if (["task", "task-todo", "task-done"].includes(this.searchMode)) {
         if (this.searchMode === "task") this.searchMode = "task-todo";
@@ -154,7 +145,7 @@ export class FlatTagView extends ItemView {
       updateModeUI();
     });
 
-    // Initialize UI
+    // Initialize UI states
     updateModeUI();
   
     const searchSection = this.sortContainer.createDiv({ cls: "flat-tag-search-section" });
@@ -210,6 +201,12 @@ export class FlatTagView extends ItemView {
             this.tagsByFile.delete(oldPath);
           }
         }
+      })
+    );
+
+    this.registerEvent(
+      this.app.workspace.on("flat-tag-view:settings-updated" as any, () => {
+        this.renderTags();
       })
     );
   }
@@ -276,13 +273,53 @@ export class FlatTagView extends ItemView {
   async renderTags() {
     this.tagContainer.empty();
     
+    // Visually update sort buttons if toggleSort() was called by hotkey
+    if (this.sortContainer) {
+      const sortAzBtn = this.sortContainer.querySelector('.flat-tag-sort-button[title="Sort A-Z"]');
+      const sortCountBtn = this.sortContainer.querySelector('.flat-tag-sort-button[title="Sort by usage"]');
+      if (sortAzBtn && sortCountBtn) {
+        sortAzBtn.removeClass('is-active');
+        sortCountBtn.removeClass('is-active');
+        if (this.currentSort === 'az') sortAzBtn.addClass('is-active');
+        else sortCountBtn.addClass('is-active');
+      }
+    }
+    
     const filteredTags = await this.getFilteredTagsAsync();
+    
+    const pinnedTags = new Map<string, number>();
+    const normalTags = new Map<string, number>();
+    const safePinnedList = this.plugin.settings?.pinnedTags || [];
+    const pinnedSet = new Set(safePinnedList);
+    
+    filteredTags.forEach((count, tag) => {
+      if (pinnedSet.has(tag)) {
+        pinnedTags.set(tag, count);
+      } else {
+        normalTags.set(tag, count);
+      }
+    });
+
+    if (pinnedTags.size > 0) {
+      const pinContainer = this.tagContainer.createDiv({ cls: "flat-tag-pinned-section" });
+      
+      const pinnedIcon = pinContainer.createSpan({ cls: "flat-tag-letter" });
+      setIcon(pinnedIcon, "pin");
+      
+      const pinnedSorted = Array.from(pinnedTags.entries()).sort((a, b) => a[0].localeCompare(b[0], 'pl'));
+      pinnedSorted.forEach(([tag, count]) => {
+        this.createTagElement(tag, count, pinContainer);
+      });
+      
+      this.tagContainer.createDiv({ cls: "flat-tag-separator" });
+    }
+
     let sortedTags: [string, number][];
     
     if (this.currentSort === "az") {
-      sortedTags = Array.from(filteredTags.entries()).sort((a, b) => a[0].localeCompare(b[0], 'pl'));
+      sortedTags = Array.from(normalTags.entries()).sort((a, b) => a[0].localeCompare(b[0], 'pl'));
     } else {
-      sortedTags = Array.from(filteredTags.entries()).sort((a, b) => b[1] - a[1]);
+      sortedTags = Array.from(normalTags.entries()).sort((a, b) => b[1] - a[1]);
     }
     
     if (this.currentSort === "az") {
@@ -317,32 +354,42 @@ export class FlatTagView extends ItemView {
           }
           
           letterTags.forEach(([tag, count]) => {
-            this.createTagElement(tag, count);
+            this.createTagElement(tag, count, this.tagContainer);
           });
         }
       });
     } else {
       sortedTags.forEach(([tag, count]) => {
-        this.createTagElement(tag, count);
+        this.createTagElement(tag, count, this.tagContainer);
       });
     }
   }
 
-  private createTagElement(tag: string, count: number) {
-    const tagEl = this.tagContainer.createSpan({ cls: "flat-tag" });
+  private createTagElement(tag: string, count: number, parentEl: HTMLElement) {
+    const tagEl = parentEl.createSpan({ cls: "flat-tag" });
     
-    if (this.selectedTags.has(tag)) {
-      tagEl.addClass("flat-tag-selected");
-    } else if (this.excludedTags.has(tag)) {
-      tagEl.addClass("flat-tag-excluded");
-    }
+    if (this.selectedTags.has(tag)) tagEl.addClass("flat-tag-selected");
+    else if (this.excludedTags.has(tag)) tagEl.addClass("flat-tag-excluded");
+    
+    const safePinned = this.plugin.settings?.pinnedTags || [];
+    if (safePinned.includes(tag)) tagEl.addClass("flat-tag-pinned");
     
     tagEl.setText(`#${tag} (${count})`);
-    
-    tagEl.addEventListener("click", (e) => {
-      const isMultiSelect = e.ctrlKey || e.metaKey;
-      const isExclude = e.shiftKey;
-      
+
+    const handleTagInteraction = async (isMultiSelect: boolean, isExclude: boolean, isPin: boolean) => {
+      if (isPin) {
+        if (!this.plugin.settings) return;
+        if (!this.plugin.settings.pinnedTags) this.plugin.settings.pinnedTags = [];
+        
+        if (this.plugin.settings.pinnedTags.includes(tag)) {
+          this.plugin.settings.pinnedTags = this.plugin.settings.pinnedTags.filter(t => t !== tag);
+        } else {
+          this.plugin.settings.pinnedTags.push(tag);
+        }
+        await this.plugin.saveSettings();
+        return; 
+      }
+
       if (isExclude) {
         if (this.excludedTags.has(tag)) {
           this.excludedTags.delete(tag);
@@ -369,7 +416,37 @@ export class FlatTagView extends ItemView {
       
       this.renderTags();
       this.updateSearch();
+    };
+
+    tagEl.addEventListener("click", (e) => {
+      e.preventDefault();
+      handleTagInteraction(e.ctrlKey || e.metaKey, e.shiftKey, e.altKey);
     });
+
+    tagEl.addEventListener("touchstart", (e) => {
+      this.touchTimer = window.setTimeout(() => {
+        this.touchTimer = null;
+        const isCurrentlySelected = this.selectedTags.has(tag);
+        handleTagInteraction(!isCurrentlySelected, isCurrentlySelected, false);
+      }, 500); 
+    }, { passive: true });
+
+    tagEl.addEventListener("touchend", (e) => {
+      if (this.touchTimer) {
+        window.clearTimeout(this.touchTimer);
+        this.touchTimer = null;
+        handleTagInteraction(false, false, false);
+      } else {
+        e.preventDefault(); 
+      }
+    });
+    
+    tagEl.addEventListener("touchmove", () => {
+      if (this.touchTimer) {
+        window.clearTimeout(this.touchTimer);
+        this.touchTimer = null;
+      }
+    }, { passive: true });
   }
 
   private async getFilteredTagsAsync(): Promise<Map<string, number>> {
@@ -435,10 +512,13 @@ export class FlatTagView extends ItemView {
       });
     }
     
-    if (this.hideSingleUseTags) {
+    const cutoff = this.plugin.settings?.frequencyCutoff || 0;
+    const safePinned = this.plugin.settings?.pinnedTags || [];
+    
+    if (cutoff > 0) {
       const result = new Map<string, number>();
       filteredTags.forEach((count, tag) => {
-        if (count > 1 || this.selectedTags.has(tag)) {
+        if (count >= cutoff || this.selectedTags.has(tag) || safePinned.includes(tag)) {
           result.set(tag, count);
         }
       });
@@ -552,11 +632,6 @@ export class FlatTagView extends ItemView {
     this.excludedTags.clear();
     this.renderTags();
     this.updateSearch();
-  }
-
-  public toggleSingleUseTags() {
-    this.hideSingleUseTags = !this.hideSingleUseTags;
-    this.renderTags();
   }
 
   public clearSearchBox() {

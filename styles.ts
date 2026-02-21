@@ -140,6 +140,16 @@ export const getStyles = (): string => {
       background-color: var(--interactive-hover);
     }
 
+    .flat-tag-sort-button.is-active {
+      background-color: var(--interactive-accent);
+      color: var(--text-on-accent);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .flat-tag-sort-button.is-active:hover {
+      background-color: var(--interactive-accent-hover);
+    }
+
     .flat-tag-list {
       display: flex;
       flex-wrap: wrap;

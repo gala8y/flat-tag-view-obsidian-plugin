@@ -2,17 +2,25 @@ import { Plugin, WorkspaceLeaf } from "obsidian";
 import { FlatTagView } from "./flatTagView";
 import { VIEW_TYPE } from "./constants";
 import { getStyles } from "./styles";
+import { FlatTagPluginSettings, DEFAULT_SETTINGS, FlatTagSettingTab } from "./settings";
 
 export default class FlatTagPlugin extends Plugin {
+  settings: FlatTagPluginSettings;
+
   async onload() {
+    await this.loadSettings();
+
     this.registerView(
       VIEW_TYPE,
-      (leaf: WorkspaceLeaf) => new FlatTagView(leaf)
+      // Pass 'this' so the view can access settings and save data
+      (leaf: WorkspaceLeaf) => new FlatTagView(leaf, this)
     );
 
     this.addRibbonIcon("tag", "Open Flat Tags", () => {
       this.activateView();
     });
+
+    this.addSettingTab(new FlatTagSettingTab(this.app, this));
 
     this.addCommand({
       id: "open-flat-tags",
@@ -71,6 +79,16 @@ export default class FlatTagPlugin extends Plugin {
     this.addStyle();
   }
 
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+    // Notify the view that settings have changed so it can re-render
+    this.app.workspace.trigger("flat-tag-view:settings-updated");
+  }
+
   async onunload() {
     this.app.workspace.detachLeavesOfType(VIEW_TYPE);
   }
@@ -99,4 +117,3 @@ export default class FlatTagPlugin extends Plugin {
     document.head.appendChild(styleEl);
   }
 }
-

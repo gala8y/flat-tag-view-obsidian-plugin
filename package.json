@@ -1,6 +1,6 @@
 {
   "name": "flat-tag-view",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "Displays tags in a flat list for Obsidian",
   "main": "main.js",
   "scripts": {

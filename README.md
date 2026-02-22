@@ -16,7 +16,7 @@ Displays tags in a flat, space-separated format with sorting options and search 
 - Automatically focuses search pane and sends selected tags to it
 
 ## Mobile Use
-FTV works on Obsidian for Android and (probably) on iOS (not tested) without any extra configuration. Standard keyboard and mouse interactions on desktop have direct touch equivalents: a single tap selects a tag (or deselects it if it is the only active selection), matching a regular left-click. A long press (~500 ms) activates multi-select on the tapped tag, equivalent to Ctrl/Cmd+Click — useful for building AND queries without a keyboard. Long press unselects tag from multiple selection. There is no touch event to handle negative tag selection. To pin or unpin a tag on mobile, swipe on tag left-to-right. Touch support is still somehow quirky.
+FTV works on Obsidian for Android and (probably) on iOS (not tested) without any extra configuration. Standard keyboard and mouse interactions on desktop have direct touch equivalents: a single tap selects a tag (or deselects it if it is the only active selection), matching a regular left-click. A long press (~500 ms) activates multi-select on the tapped tag, equivalent to Ctrl/Cmd+Click — useful for building AND queries without a keyboard. Long press unselects tag from multiple selection. There is no touch event to handle negative tag selection. To pin or unpin a tag on mobile, swipe on tag right-to-left. Touch support is still somehow quirky.
 
 ### _vibe coded w/ ai_
 - _0.1.0 claude 3.7 sonnet / 4o_

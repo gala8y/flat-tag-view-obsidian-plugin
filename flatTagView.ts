@@ -535,7 +535,6 @@ export class FlatTagView extends ItemView {
       if (searchView && typeof searchView.setQuery === "function") {
         searchView.setQuery(tagQuery);
       }
-      this.app.workspace.revealLeaf(searchLeaf);
     }
   }
 

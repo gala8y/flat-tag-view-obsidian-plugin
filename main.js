@@ -482,7 +482,6 @@ var FlatTagView = class extends import_obsidian.ItemView {
       if (searchView && typeof searchView.setQuery === "function") {
         searchView.setQuery(tagQuery);
       }
-      this.app.workspace.revealLeaf(searchLeaf);
     }
   }
   getFileTags(file) {

@@ -13,8 +13,7 @@ Displays tags in a flat, space-separated format with sorting options and search 
 - setting to hide infrequently used tags (frequency cutoff)
 - simple search for tags with clear button 
 - configurable hotkeys
-- automatically focuses search pane
-- sends selected tags to obsidian search pane
+- automatically focuses search pane and sends selected tags to it
 
 _vibe coded w/ ai_
 _0.1.0 claude 3.7 sonnet / 4o_
@@ -26,6 +25,6 @@ ver. 0.2.0 changelog
 - added line-mode (check co-occurance per line, tags have to be on same line to show up as co-occuring)
 - added tasks-mode (same as line-mode, but works only with tasks)
 - changed 'hide single use tags' to 'frequency cutoff' (hides tags occuring less than x times)
-- added mobile version compatibility 
+- added mobile version compatibility
 
 

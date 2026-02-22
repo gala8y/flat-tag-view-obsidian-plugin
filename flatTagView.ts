@@ -1,21 +1,33 @@
 import { ItemView, WorkspaceLeaf, TFile, setIcon } from "obsidian";
 import { VIEW_TYPE } from "./constants";
+import FlatTagPlugin from "./main";
 
 export class FlatTagView extends ItemView {
+  public plugin: FlatTagPlugin;
   private container: HTMLElement;
   private tagContainer: HTMLElement;
   private sortContainer: HTMLElement;
+  
+  private sortAzBtn: HTMLElement;
+  private sortCountBtn: HTMLElement;
+  private scopeBtn: HTMLElement;
+  private taskBtn: HTMLElement;
+
   private selectedTags: Set<string> = new Set();
   private excludedTags: Set<string> = new Set();
   private allTags: Map<string, number> = new Map();
   private currentSort: "az" | "count" = "az";
-  private tagsByFile: Map<string, Set<string>> = new Map();
-  private hideSingleUseTags: boolean = false;
-  private showAlphabetLetters: boolean = false;
+  
+  // CHANGED FROM Set<string> TO string[] SO WE COUNT TOTAL OCCURRENCES, NOT JUST FILES!
+  private tagsByFile: Map<string, string[]> = new Map();
+  
   private tagSearchText: string = "";
+  private searchMode: "note" | "line" | "task" | "task-todo" | "task-done" = "note";
+  private touchTimer: number | null = null;
 
-  constructor(leaf: WorkspaceLeaf) {
+  constructor(leaf: WorkspaceLeaf, plugin: FlatTagPlugin) {
     super(leaf);
+    this.plugin = plugin;
     this.containerEl.addClass("flat-tag-view");
   }
 
@@ -32,58 +44,52 @@ export class FlatTagView extends ItemView {
   }
 
   async onOpen() {
-    // Create container and sort container
     this.container = this.contentEl.createDiv({ cls: "flat-tag-container" });
     this.sortContainer = this.container.createDiv({ cls: "flat-tag-sort-container" });
   
-    // Create left section for buttons
     const buttonSection = this.sortContainer.createDiv({ cls: "flat-tag-buttons-section" });
   
-    // Add existing buttons to the button section
-    const sortByAZ = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort A-Z" });
-    setIcon(sortByAZ, "lucide-sort-asc");
-    sortByAZ.addEventListener("click", () => {
-      this.currentSort = "az";
-      this.renderTags();
-    });
+    this.sortAzBtn = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort A-Z" });
+    setIcon(this.sortAzBtn, "lucide-sort-asc");
+    
+    this.sortCountBtn = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort by usage" });
+    setIcon(this.sortCountBtn, "lucide-bar-chart-2");
   
-    const sortByCount = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort by usage" });
-    setIcon(sortByCount, "lucide-bar-chart-2");
-    sortByCount.addEventListener("click", () => {
-      this.currentSort = "count";
-      this.renderTags();
-    });
-  
-    const clearButton = buttonSection.createDiv({ cls: "flat-tag-clear-button" });
+    const clearButton = buttonSection.createDiv({ cls: "flat-tag-clear-button", title: "Clear tag selections" });
     setIcon(clearButton, "x");
     clearButton.addEventListener("click", () => {
       this.clearTagSelections();
     });
+
+    this.scopeBtn = buttonSection.createDiv({ 
+      cls: "flat-tag-mode-button", 
+      text: "NOTE",
+      title: "Click to cycle: Note -> Line" 
+    });
+
+    this.taskBtn = buttonSection.createDiv({ 
+      cls: "flat-tag-mode-button", 
+      text: "TASK-ALL",
+      title: "Click to cycle: All -> Todo -> Done"
+    });
+
+    this.sortAzBtn.addEventListener("click", () => {
+      this.currentSort = "az";
+      this.updateModeUI();
+    });
+
+    this.sortCountBtn.addEventListener("click", () => {
+      this.currentSort = "count";
+      this.updateModeUI();
+    });
+
+    this.scopeBtn.addEventListener("click", () => this.toggleScopeMode());
+    this.taskBtn.addEventListener("click", () => this.toggleTaskMode());
+
+    this.updateModeUI();
   
-    const toggleSingleUseButton = buttonSection.createDiv({ 
-      cls: "flat-tag-sort-button", 
-      title: "Toggle single-use tags" 
-    });
-    setIcon(toggleSingleUseButton, "eye-off");
-    toggleSingleUseButton.addEventListener("click", () => {
-      this.toggleSingleUseTags();
-      setIcon(toggleSingleUseButton, this.hideSingleUseTags ? "eye" : "eye-off");
-    });
-  
-    const toggleAlphabetButton = buttonSection.createDiv({ 
-      cls: "flat-tag-sort-button", 
-      title: "Toggle alphabet letters" 
-    });
-    setIcon(toggleAlphabetButton, "lucide-brick-wall");
-    toggleAlphabetButton.addEventListener("click", () => {
-      this.toggleAlphabetLetters();
-      setIcon(toggleAlphabetButton, this.showAlphabetLetters ? "cuboid" : "lucide-brick-wall");
-    });
-  
-    // Create search section on the right
     const searchSection = this.sortContainer.createDiv({ cls: "flat-tag-search-section" });
     
-    // Add search box
     const searchBox = searchSection.createEl("input", {
       cls: "flat-tag-search-input",
       attr: { 
@@ -92,7 +98,6 @@ export class FlatTagView extends ItemView {
       }
     });
     
-    // Add clear search button
     const clearSearchButton = searchSection.createDiv({ 
       cls: "flat-tag-search-clear-button",
       title: "Clear search" 
@@ -102,7 +107,6 @@ export class FlatTagView extends ItemView {
       this.clearSearchBox();
     });
     
-    // Add event listener for search input
     searchBox.addEventListener("input", (e) => {
       const target = e.target as HTMLInputElement;
       this.tagSearchText = target.value;
@@ -114,12 +118,39 @@ export class FlatTagView extends ItemView {
     await this.loadTags();
   
     this.registerEvent(
-      this.app.metadataCache.on("resolved", () => {
-        this.loadTags();
+      this.app.metadataCache.on("changed", (file: TFile) => {
+        this.updateFileTags(file);
+      })
+    );
+
+    this.registerEvent(
+      this.app.vault.on("delete", (file) => {
+        if (file instanceof TFile && file.extension === "md") {
+          this.removeFileTags(file.path);
+          this.renderTags();
+        }
+      })
+    );
+    
+    this.registerEvent(
+      this.app.vault.on("rename", (file, oldPath) => {
+        if (file instanceof TFile && file.extension === "md") {
+          const tags = this.tagsByFile.get(oldPath);
+          if (tags) {
+            this.tagsByFile.set(file.path, tags);
+            this.tagsByFile.delete(oldPath);
+          }
+        }
+      })
+    );
+
+    this.registerEvent(
+      this.app.workspace.on("flat-tag-view:settings-updated" as any, () => {
+        this.renderTags();
       })
     );
   }
-  
+
   async loadTags() {
     this.allTags.clear();
     this.tagsByFile.clear();
@@ -127,10 +158,8 @@ export class FlatTagView extends ItemView {
     const files = this.app.vault.getMarkdownFiles();
     
     for (const file of files) {
-      const fileTags = this.getFileTags(file);
-      
-      // Store tags by file for filtering
-      this.tagsByFile.set(file.path, new Set(fileTags));
+      const fileTags = this.getFileTags(file); // Now returns all duplicates!
+      this.tagsByFile.set(file.path, fileTags);
       
       fileTags.forEach(tag => {
         this.allTags.set(tag, (this.allTags.get(tag) || 0) + 1);
@@ -140,47 +169,117 @@ export class FlatTagView extends ItemView {
     this.renderTags();
   }
 
-  renderTags() {
+  private updateFileTags(file: TFile) {
+    const oldTagsArr = this.tagsByFile.get(file.path) || [];
+    const newTagsArr = this.getFileTags(file);
+    
+    // Sort and join arrays to quickly check if the exact tags and counts have changed
+    const oldSorted = [...oldTagsArr].sort().join(",");
+    const newSorted = [...newTagsArr].sort().join(",");
+    
+    if (oldSorted !== newSorted) {
+      // Decrement the old tag occurrences
+      oldTagsArr.forEach(tag => {
+        const count = (this.allTags.get(tag) || 0) - 1;
+        if (count <= 0) this.allTags.delete(tag);
+        else this.allTags.set(tag, count);
+      });
+      
+      // Increment the new tag occurrences
+      newTagsArr.forEach(tag => {
+        this.allTags.set(tag, (this.allTags.get(tag) || 0) + 1);
+      });
+      
+      this.tagsByFile.set(file.path, newTagsArr);
+      this.renderTags();
+    }
+  }
+
+  private removeFileTags(filePath: string) {
+    const oldTags = this.tagsByFile.get(filePath);
+    if (!oldTags) return;
+    
+    oldTags.forEach(tag => {
+      const count = (this.allTags.get(tag) || 0) - 1;
+      if (count <= 0) this.allTags.delete(tag);
+      else this.allTags.set(tag, count);
+    });
+    
+    this.tagsByFile.delete(filePath);
+  }
+
+  async renderTags() {
     this.tagContainer.empty();
     
-    const filteredTags = this.getFilteredTags();
+    if (this.sortContainer) {
+      const sortAzBtn = this.sortContainer.querySelector('.flat-tag-sort-button[title="Sort A-Z"]');
+      const sortCountBtn = this.sortContainer.querySelector('.flat-tag-sort-button[title="Sort by usage"]');
+      if (sortAzBtn && sortCountBtn) {
+        sortAzBtn.removeClass('is-active');
+        sortCountBtn.removeClass('is-active');
+        if (this.currentSort === 'az') sortAzBtn.addClass('is-active');
+        else sortCountBtn.addClass('is-active');
+      }
+    }
     
+    const filteredTags = await this.getFilteredTagsAsync();
+    
+    const pinnedTags = new Map<string, number>();
+    const normalTags = new Map<string, number>();
+    const safePinnedList = this.plugin.settings?.pinnedTags || [];
+    const pinnedSet = new Set(safePinnedList);
+    
+    filteredTags.forEach((count, tag) => {
+      if (pinnedSet.has(tag)) {
+        pinnedTags.set(tag, count);
+      } else {
+        normalTags.set(tag, count);
+      }
+    });
+
+    if (pinnedTags.size > 0) {
+      const pinContainer = this.tagContainer.createDiv({ cls: "flat-tag-pinned-section" });
+      
+      const pinnedIcon = pinContainer.createSpan({ cls: "flat-tag-letter" });
+      setIcon(pinnedIcon, "pin");
+      
+      const pinnedSorted = Array.from(pinnedTags.entries()).sort((a, b) => a[0].localeCompare(b[0], 'pl'));
+      pinnedSorted.forEach(([tag, count]) => {
+        this.createTagElement(tag, count, pinContainer);
+      });
+      
+      this.tagContainer.createDiv({ cls: "flat-tag-separator" });
+    }
+
     let sortedTags: [string, number][];
     
     if (this.currentSort === "az") {
-      sortedTags = Array.from(filteredTags.entries()).sort((a, b) => a[0].localeCompare(b[0], 'pl'));
+      sortedTags = Array.from(normalTags.entries()).sort((a, b) => a[0].localeCompare(b[0], 'pl'));
     } else {
-      sortedTags = Array.from(filteredTags.entries()).sort((a, b) => b[1] - a[1]);
+      sortedTags = Array.from(normalTags.entries()).sort((a, b) => b[1] - a[1]);
     }
     
-    if (this.showAlphabetLetters && this.currentSort === "az") {
+    if (this.currentSort === "az") {
       const tagsByLetter = new Map<string, Array<[string, number]>>();
-      
-      // Initialize with "other" group first, then A-Z, then Polish diacritics
       tagsByLetter.set("other", []);
+      
       for (let charCode = 65; charCode <= 90; charCode++) {
-        const letter = String.fromCharCode(charCode);
-        tagsByLetter.set(letter, []);
+        tagsByLetter.set(String.fromCharCode(charCode), []);
       }
+      
       const polishDiacritics = ['Ą', 'Ć', 'Ę', 'Ł', 'Ń', 'Ó', 'Ś', 'Ź', 'Ż'];
       polishDiacritics.forEach(letter => tagsByLetter.set(letter, []));
       
       sortedTags.forEach(tagItem => {
-        const [tag, count] = tagItem;
+        const [tag] = tagItem;
         const firstChar = tag.charAt(0).toUpperCase();
         
         if (firstChar.match(/[A-Z]/)) {
-          const letterTags = tagsByLetter.get(firstChar) || [];
-          letterTags.push(tagItem);
-          tagsByLetter.set(firstChar, letterTags);
+          tagsByLetter.get(firstChar)?.push(tagItem);
         } else if (polishDiacritics.includes(firstChar)) {
-          const letterTags = tagsByLetter.get(firstChar) || [];
-          letterTags.push(tagItem);
-          tagsByLetter.set(firstChar, letterTags);
+          tagsByLetter.get(firstChar)?.push(tagItem);
         } else {
-          const otherTags = tagsByLetter.get("other") || [];
-          otherTags.push(tagItem);
-          tagsByLetter.set("other", otherTags);
+          tagsByLetter.get("other")?.push(tagItem);
         }
       });
       
@@ -192,32 +291,42 @@ export class FlatTagView extends ItemView {
           }
           
           letterTags.forEach(([tag, count]) => {
-            this.createTagElement(tag, count);
+            this.createTagElement(tag, count, this.tagContainer);
           });
         }
       });
     } else {
       sortedTags.forEach(([tag, count]) => {
-        this.createTagElement(tag, count);
+        this.createTagElement(tag, count, this.tagContainer);
       });
     }
   }
-  
-  private createTagElement(tag: string, count: number) {
-    const tagEl = this.tagContainer.createSpan({ cls: "flat-tag" });
+
+  private createTagElement(tag: string, count: number, parentEl: HTMLElement) {
+    const tagEl = parentEl.createSpan({ cls: "flat-tag" });
     
-    if (this.selectedTags.has(tag)) {
-      tagEl.addClass("flat-tag-selected");
-    } else if (this.excludedTags.has(tag)) {
-      tagEl.addClass("flat-tag-excluded");
-    }
+    if (this.selectedTags.has(tag)) tagEl.addClass("flat-tag-selected");
+    else if (this.excludedTags.has(tag)) tagEl.addClass("flat-tag-excluded");
+    
+    const safePinned = this.plugin.settings?.pinnedTags || [];
+    if (safePinned.includes(tag)) tagEl.addClass("flat-tag-pinned");
     
     tagEl.setText(`#${tag} (${count})`);
-    
-    tagEl.addEventListener("click", (e) => {
-      const isMultiSelect = e.ctrlKey || e.metaKey;
-      const isExclude = e.shiftKey && isMultiSelect;
-      
+
+    const handleTagInteraction = async (isMultiSelect: boolean, isExclude: boolean, isPin: boolean) => {
+      if (isPin) {
+        if (!this.plugin.settings) return;
+        if (!this.plugin.settings.pinnedTags) this.plugin.settings.pinnedTags = [];
+        
+        if (this.plugin.settings.pinnedTags.includes(tag)) {
+          this.plugin.settings.pinnedTags = this.plugin.settings.pinnedTags.filter(t => t !== tag);
+        } else {
+          this.plugin.settings.pinnedTags.push(tag);
+        }
+        await this.plugin.saveSettings();
+        return; 
+      }
+
       if (isExclude) {
         if (this.excludedTags.has(tag)) {
           this.excludedTags.delete(tag);
@@ -244,38 +353,95 @@ export class FlatTagView extends ItemView {
       
       this.renderTags();
       this.updateSearch();
+    };
+
+    tagEl.addEventListener("click", (e) => {
+      e.preventDefault();
+      handleTagInteraction(e.ctrlKey || e.metaKey, e.shiftKey, e.altKey);
     });
-  }
+
+    tagEl.addEventListener("touchstart", (e) => {
+      this.touchTimer = window.setTimeout(() => {
+        this.touchTimer = null;
+        const isCurrentlySelected = this.selectedTags.has(tag);
+        handleTagInteraction(!isCurrentlySelected, isCurrentlySelected, false);
+      }, 500); 
+    }, { passive: true });
+
+    tagEl.addEventListener("touchend", (e) => {
+      if (this.touchTimer) {
+        window.clearTimeout(this.touchTimer);
+        this.touchTimer = null;
+        handleTagInteraction(false, false, false);
+      } else {
+        e.preventDefault(); 
+      }
+    });
     
-  getFilteredTags(): Map<string, number> {
-    // Get tags based on current selection
+    tagEl.addEventListener("touchmove", () => {
+      if (this.touchTimer) {
+        window.clearTimeout(this.touchTimer);
+        this.touchTimer = null;
+      }
+    }, { passive: true });
+  }
+
+  private async getFilteredTagsAsync(): Promise<Map<string, number>> {
     let filteredTags = new Map<string, number>();
     
-    // If no tags selected, show all tags
     if (this.selectedTags.size === 0) {
       filteredTags = new Map(this.allTags);
     } else {
-      // Find files that contain ALL selected tags
       const selectedTagsArray = Array.from(this.selectedTags);
       const matchingFiles: string[] = [];
       
-      this.tagsByFile.forEach((tags, filePath) => {
-        if (selectedTagsArray.every(tag => tags.has(tag))) {
+      this.tagsByFile.forEach((tagsArr, filePath) => {
+        if (selectedTagsArray.every(tag => tagsArr.includes(tag))) {
           matchingFiles.push(filePath);
         }
       });
       
-      // Add all co-occurring tags
-      matchingFiles.forEach(filePath => {
-        const fileTags = this.tagsByFile.get(filePath);
-        if (fileTags) {
-          fileTags.forEach(tag => {
-            filteredTags.set(tag, (filteredTags.get(tag) || 0) + 1);
-          });
+      if (this.searchMode === "note") {
+        matchingFiles.forEach(filePath => {
+          const fileTags = this.tagsByFile.get(filePath);
+          if (fileTags) {
+            fileTags.forEach(tag => {
+              filteredTags.set(tag, (filteredTags.get(tag) || 0) + 1);
+            });
+          }
+        });
+      } else {
+        for (const filePath of matchingFiles) {
+          const file = this.app.vault.getAbstractFileByPath(filePath);
+          if (file instanceof TFile) {
+            const content = await this.app.vault.cachedRead(file);
+            const lines = content.split('\n');
+            
+            for (const line of lines) {
+              const lowerLine = line.toLowerCase();
+              if (this.searchMode === "task" && !lowerLine.includes("- [")) continue;
+              if (this.searchMode === "task-todo" && !lowerLine.includes("- [ ]")) continue;
+              if (this.searchMode === "task-done" && !lowerLine.includes("- [x]")) continue;
+              
+              const lineTags = new Set<string>();
+              const tagRegex = /#([^\s#]+)/g;
+              let match;
+              while ((match = tagRegex.exec(line)) !== null) {
+                lineTags.add(match[1]);
+              }
+              
+              if (selectedTagsArray.every(selectedTag => {
+                return Array.from(lineTags).some(t => t.toLowerCase() === selectedTag.toLowerCase());
+              })) {
+                lineTags.forEach(tag => {
+                  filteredTags.set(tag, (filteredTags.get(tag) || 0) + 1);
+                });
+              }
+            }
+          }
         }
-      });
+      }
       
-      // Ensure selected tags are included
       selectedTagsArray.forEach(tag => {
         if (!filteredTags.has(tag)) {
           filteredTags.set(tag, this.allTags.get(tag) || 0);
@@ -283,52 +449,35 @@ export class FlatTagView extends ItemView {
       });
     }
     
-    // Filter out single-use tags if option is enabled
-    if (this.hideSingleUseTags) {
+    const cutoff = this.plugin.settings?.frequencyCutoff || 0;
+    const safePinned = this.plugin.settings?.pinnedTags || [];
+    
+    if (cutoff > 0) {
       const result = new Map<string, number>();
       filteredTags.forEach((count, tag) => {
-        if (count > 1 || this.selectedTags.has(tag)) {
+        if (count >= cutoff || this.selectedTags.has(tag) || safePinned.includes(tag)) {
           result.set(tag, count);
         }
       });
       filteredTags = result;
     }
     
-    // Filter by search text but keep selected/excluded tags visible
     if (this.tagSearchText) {
       const searchText = this.tagSearchText.toLowerCase();
       const result = new Map<string, number>();
       
       filteredTags.forEach((count, tag) => {
-        if (tag.toLowerCase().includes(searchText) || 
-            this.selectedTags.has(tag) || 
-            this.excludedTags.has(tag)) {
+        if (tag.toLowerCase().includes(searchText) || this.selectedTags.has(tag) || this.excludedTags.has(tag)) {
           result.set(tag, count);
         }
       });
-      
       return result;
     }
     
     return filteredTags;
   }
-  
-  updateSearch() {
-    if (this.selectedTags.size === 0 && this.excludedTags.size === 0) {
-      this.app.workspace.getLeavesOfType("search").forEach(leaf => {
-        const searchView = leaf.view as any;
-        if (searchView && typeof searchView.clearSearch === "function") {
-          searchView.clearSearch();
-        }
-      });
-      return;
-    }
-    
-    const tagQuery = [
-      ...Array.from(this.selectedTags).map(tag => `tag:#${tag}`),
-      ...Array.from(this.excludedTags).map(tag => `-tag:#${tag}`)
-    ].join(" ");
-    
+
+  private updateSearch() {
     let searchLeaf = this.app.workspace.getLeavesOfType("search")[0];
     
     if (!searchLeaf) {
@@ -338,72 +487,159 @@ export class FlatTagView extends ItemView {
         searchLeaf.setViewState({ type: "search" });
       }
     }
+
+    if (this.selectedTags.size === 0 && this.excludedTags.size === 0) {
+      if (searchLeaf) {
+        const searchView = searchLeaf.view as any;
+        if (searchView && typeof searchView.setQuery === "function") {
+          searchView.setQuery("");
+        }
+      }
+      return;
+    }
+    
+    let tagQuery = "";
+    const selected = Array.from(this.selectedTags);
+    const excluded = Array.from(this.excludedTags);
+
+    if (this.searchMode === "note") {
+      tagQuery = [
+        ...selected.map(tag => `tag:#${tag}`),
+        ...excluded.map(tag => `-tag:#${tag}`)
+      ].join(" ");
+    } else {
+      let prefix = "line:(";
+      if (this.searchMode === "task") prefix = "task:(";
+      else if (this.searchMode === "task-todo") prefix = "task-todo:(";
+      else if (this.searchMode === "task-done") prefix = "task-done:(";
+      
+      const blockContents = [
+        ...selected.map(tag => `#${tag}`),
+        ...excluded.map(tag => `-#${tag}`)
+      ].join(" ");
+
+      tagQuery = `${prefix} ${blockContents} )`;
+    }
     
     if (searchLeaf) {
       const searchView = searchLeaf.view as any;
       if (searchView && typeof searchView.setQuery === "function") {
         searchView.setQuery(tagQuery);
-        searchView.search();
       }
-      
       this.app.workspace.revealLeaf(searchLeaf);
     }
   }
-  
+
   getFileTags(file: TFile): string[] {
     const cache = this.app.metadataCache.getFileCache(file);
     if (!cache) return [];
     
-    const tags = new Set<string>();
+    const tags: string[] = []; // Changed to array to allow duplicates
     
     if (cache.tags) {
       cache.tags.forEach(tagObj => {
-        const tag = tagObj.tag.replace(/^#/, "");
-        tags.add(tag);
+        tags.push(tagObj.tag.replace(/^#/, ""));
       });
     }
     
     if (cache.frontmatter && cache.frontmatter.tags) {
       const fmTags = cache.frontmatter.tags;
       if (typeof fmTags === 'string') {
-        fmTags.split(/[,\s]+/).filter(Boolean).forEach(tag => {
-          tags.add(tag);
+        fmTags.split(/[\s,]+/).filter(Boolean).forEach(tag => {
+          tags.push(tag);
         });
       } else if (Array.isArray(fmTags)) {
         fmTags.forEach(tag => {
-          if (tag) tags.add(String(tag));
+          if (tag) tags.push(String(tag));
         });
       }
     }
     
-    return Array.from(tags);
+    return tags;
   }
 
-  // Methods for hotkey functionality
-  toggleSort() {
+  public updateModeUI() {
+    if (!this.sortAzBtn || !this.sortCountBtn || !this.scopeBtn || !this.taskBtn) return;
+    
+    this.sortAzBtn.removeClass("is-active");
+    this.sortCountBtn.removeClass("is-active");
+    if (this.currentSort === "az") this.sortAzBtn.addClass("is-active");
+    if (this.currentSort === "count") this.sortCountBtn.addClass("is-active");
+
+    this.scopeBtn.removeClass("is-active");
+    this.taskBtn.removeClass("is-active");
+    
+    if (this.searchMode === "note") {
+      this.scopeBtn.setText("NOTE");
+      this.scopeBtn.addClass("is-active");
+    } else if (this.searchMode === "line") {
+      this.scopeBtn.setText("LINE");
+      this.scopeBtn.addClass("is-active");
+    } else if (this.searchMode === "task") {
+      this.taskBtn.setText("TASK-ALL");
+      this.taskBtn.addClass("is-active");
+    } else if (this.searchMode === "task-todo") {
+      this.taskBtn.setText("TASK-TODO");
+      this.taskBtn.addClass("is-active");
+    } else if (this.searchMode === "task-done") {
+      this.taskBtn.setText("TASK-DONE");
+      this.taskBtn.addClass("is-active");
+    }
+    
+    if (["note", "line"].includes(this.searchMode)) {
+      if (!["TASK-ALL", "TASK-TODO", "TASK-DONE"].includes(this.taskBtn.innerText)) {
+        this.taskBtn.setText("TASK-ALL");
+      }
+    } else {
+      if (!["NOTE", "LINE"].includes(this.scopeBtn.innerText)) {
+        this.scopeBtn.setText("NOTE");
+      }
+    }
+
+    this.updateSearch(); 
+    if (this.tagContainer) {
+      this.renderTags();
+    }
+  }
+
+  public toggleScopeMode() {
+    if (!this.scopeBtn) return;
+    if (["note", "line"].includes(this.searchMode)) {
+      this.searchMode = this.searchMode === "note" ? "line" : "note";
+    } else {
+      this.searchMode = this.scopeBtn.innerText === "LINE" ? "line" : "note";
+    }
+    this.updateModeUI();
+  }
+
+  public toggleTaskMode() {
+    if (!this.taskBtn) return;
+    if (["task", "task-todo", "task-done"].includes(this.searchMode)) {
+      if (this.searchMode === "task") this.searchMode = "task-todo";
+      else if (this.searchMode === "task-todo") this.searchMode = "task-done";
+      else this.searchMode = "task";
+    } else {
+      if (this.taskBtn.innerText === "TASK-TODO") this.searchMode = "task-todo";
+      else if (this.taskBtn.innerText === "TASK-DONE") this.searchMode = "task-done";
+      else this.searchMode = "task";
+    }
+    this.updateModeUI();
+  }
+
+  public toggleSort() {
     this.currentSort = this.currentSort === "az" ? "count" : "az";
-    this.renderTags();
+    this.updateModeUI();
   }
 
-  clearTagSelections() {
+  public clearTagSelections() {
     this.selectedTags.clear();
     this.excludedTags.clear();
     this.renderTags();
     this.updateSearch();
   }
 
-  toggleSingleUseTags() {
-    this.hideSingleUseTags = !this.hideSingleUseTags;
-    this.renderTags();
-  }
-
-  toggleAlphabetLetters() {
-    this.showAlphabetLetters = !this.showAlphabetLetters;
-    this.renderTags();
-  }
-
-  clearSearchBox() {
-    const searchBox = this.contentEl.querySelector(".flat-tag-search-input") as HTMLInputElement;
+  public clearSearchBox() {
+    const searchBox = this.contentEl.querySelector('.flat-tag-search-input') as HTMLInputElement;
     if (searchBox) {
       searchBox.value = "";
       this.tagSearchText = "";
@@ -411,4 +647,3 @@ export class FlatTagView extends ItemView {
     }
   }
 }
-

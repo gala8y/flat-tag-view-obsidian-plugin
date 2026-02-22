@@ -2,17 +2,25 @@ import { Plugin, WorkspaceLeaf } from "obsidian";
 import { FlatTagView } from "./flatTagView";
 import { VIEW_TYPE } from "./constants";
 import { getStyles } from "./styles";
+import { FlatTagPluginSettings, DEFAULT_SETTINGS, FlatTagSettingTab } from "./settings";
 
 export default class FlatTagPlugin extends Plugin {
+  settings: FlatTagPluginSettings;
+
   async onload() {
+    await this.loadSettings();
+
     this.registerView(
       VIEW_TYPE,
-      (leaf: WorkspaceLeaf) => new FlatTagView(leaf)
+      // Pass 'this' so the view can access settings and save data
+      (leaf: WorkspaceLeaf) => new FlatTagView(leaf, this)
     );
 
     this.addRibbonIcon("tag", "Open Flat Tags", () => {
       this.activateView();
     });
+
+    this.addSettingTab(new FlatTagSettingTab(this.app, this));
 
     this.addCommand({
       id: "open-flat-tags",
@@ -28,7 +36,7 @@ export default class FlatTagPlugin extends Plugin {
       name: "Toggle Flat Tag Sort (A-Z/Usage)",
       callback: () => {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.toggleSort();
+        if (view && typeof view.toggleSort === 'function') view.toggleSort();
       },
     });
 
@@ -37,25 +45,7 @@ export default class FlatTagPlugin extends Plugin {
       name: "Clear Flat Tag Selections",
       callback: () => {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.clearTagSelections();
-      },
-    });
-
-    this.addCommand({
-      id: "toggle-flat-tag-single-use",
-      name: "Toggle Flat Tag Single Use",
-      callback: () => {
-        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.toggleSingleUseTags();
-      },
-    });
-
-    this.addCommand({
-      id: "toggle-flat-tag-alphabet",
-      name: "Toggle Flat Tag Alphabet Letters",
-      callback: () => {
-        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.toggleAlphabetLetters();
+        if (view && typeof view.clearTagSelections === 'function') view.clearTagSelections();
       },
     });
 
@@ -64,11 +54,38 @@ export default class FlatTagPlugin extends Plugin {
       name: "Clear Flat Tag Search Box",
       callback: () => {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.clearSearchBox();
+        if (view && typeof view.clearSearchBox === 'function') view.clearSearchBox();
+      },
+    });
+
+    this.addCommand({
+      id: "toggle-flat-tag-scope-mode",
+      name: "Toggle Flat Tag Mode (Note/Line)",
+      callback: () => {
+        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
+        if (view && typeof view.toggleScopeMode === 'function') view.toggleScopeMode();
+      },
+    });
+
+    this.addCommand({
+      id: "toggle-flat-tag-task-mode",
+      name: "Cycle Flat Tag Task Mode (All/Todo/Done)",
+      callback: () => {
+        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
+        if (view && typeof view.toggleTaskMode === 'function') view.toggleTaskMode();
       },
     });
 
     this.addStyle();
+  }
+
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+    this.app.workspace.trigger("flat-tag-view:settings-updated");
   }
 
   async onunload() {
@@ -99,4 +116,3 @@ export default class FlatTagPlugin extends Plugin {
     document.head.appendChild(styleEl);
   }
 }
-

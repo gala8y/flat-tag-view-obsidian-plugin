@@ -31,11 +31,54 @@ export const getStyles = (): string => {
       background-color: var(--background-primary);
       border-bottom: 1px solid var(--background-modifier-border);
       width: 100%;
+      flex-wrap: wrap; /* Allows searching to wrap nicely on narrow panes */
+      gap: 8px;
     }
     
     .flat-tag-buttons-section {
       display: flex;
-      gap: 8px;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    
+    /* Base styling for our Note/Line and Task toggle buttons */
+    .flat-tag-mode-button {
+      cursor: pointer;
+      padding: 4px 10px;
+      font-size: 0.8em;
+      font-weight: 500;
+      border-radius: var(--radius-s);
+      color: var(--text-muted);
+      background-color: var(--background-modifier-form-field);
+      border: 1px solid var(--background-modifier-border);
+      transition: all 0.15s ease-in-out;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 65px;
+    }
+
+    /* Hover effect for inactive state */
+    .flat-tag-mode-button:hover {
+      color: var(--text-normal);
+      background-color: var(--background-modifier-hover);
+      border-color: var(--background-modifier-border-hover);
+    }
+
+    /* Highly visible active (pressed) state */
+    .flat-tag-mode-button.is-active {
+      background-color: var(--interactive-accent);
+      color: var(--text-on-accent);
+      border-color: var(--interactive-accent);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    /* Hover effect when active */
+    .flat-tag-mode-button.is-active:hover {
+      background-color: var(--interactive-accent-hover);
+      border-color: var(--interactive-accent-hover);
     }
     
     .flat-tag-search-section {
@@ -46,13 +89,15 @@ export const getStyles = (): string => {
       background-color: var(--background-secondary);
       border-radius: 4px;
       padding: 2px 8px;
+      flex-grow: 1;
+      max-width: 200px;
     }
     
     .flat-tag-search-input {
       background: transparent;
       border: none;
       color: var(--text-normal);
-      width: 150px;
+      width: 100%;
       height: 24px;
       font-size: 0.9em;
     }
@@ -86,10 +131,23 @@ export const getStyles = (): string => {
       cursor: pointer;
       padding: 4px;
       border-radius: 4px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .flat-tag-sort-button:hover, .flat-tag-clear-button:hover {
       background-color: var(--interactive-hover);
+    }
+
+    .flat-tag-sort-button.is-active {
+      background-color: var(--interactive-accent);
+      color: var(--text-on-accent);
+      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .flat-tag-sort-button.is-active:hover {
+      background-color: var(--interactive-accent-hover);
     }
 
     .flat-tag-list {
@@ -111,6 +169,7 @@ export const getStyles = (): string => {
       cursor: pointer;
       background-color: var(--tag-background);
       color: var(--tag-color);
+      transition: background-color 0.1s;
     }
 
     .flat-tag:hover {
@@ -130,7 +189,7 @@ export const getStyles = (): string => {
     }
     
     .flat-tag-letter {
-      display: inline-block;
+      display: inline-flex;
       font-weight: bold;
       font-size: 1.2em;
       margin: 2px;
@@ -138,8 +197,31 @@ export const getStyles = (): string => {
       border-radius: 4px;
       background-color: var(--background-secondary);
       color: var(--text-normal);
-      vertical-align: middle;
+      align-items: center;
+      justify-content: center;
+      min-width: 24px;
     }
+        .flat-tag-pinned-section {
+      width: 100%;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      background-color: var(--background-secondary-alt);
+      padding: 4px;
+      border-radius: var(--radius-s);
+      margin-bottom: 4px;
+    }
+
+    .flat-tag-separator {
+      width: 100%;
+      height: 1px;
+      background-color: var(--background-modifier-border);
+      margin: 4px 0 8px 0;
+    }
+    
+    .flat-tag-pinned {
+      border: 1px solid var(--interactive-accent);
+    }
+
   `;
 };
-

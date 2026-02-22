@@ -1,4 +1,7 @@
 {
   "pinnedTags": [],
-  "frequencyCutoff": 3
+  "frequencyCutoff": 15,
+  "frequencyCutoffEnabled": false,
+  "altClickTagMode": "end-line",
+  "altClickAction": "start-line"
 }

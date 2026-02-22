@@ -31,18 +31,17 @@ export const getStyles = (): string => {
       background-color: var(--background-primary);
       border-bottom: 1px solid var(--background-modifier-border);
       width: 100%;
-      flex-wrap: wrap; /* Allows searching to wrap nicely on narrow panes */
+      flex-wrap: wrap;
       gap: 8px;
     }
-    
+
     .flat-tag-buttons-section {
       display: flex;
       gap: 6px;
       align-items: center;
       flex-wrap: wrap;
     }
-    
-    /* Base styling for our Note/Line and Task toggle buttons */
+
     .flat-tag-mode-button {
       cursor: pointer;
       padding: 4px 10px;
@@ -60,14 +59,12 @@ export const getStyles = (): string => {
       min-width: 65px;
     }
 
-    /* Hover effect for inactive state */
     .flat-tag-mode-button:hover {
       color: var(--text-normal);
       background-color: var(--background-modifier-hover);
       border-color: var(--background-modifier-border-hover);
     }
 
-    /* Highly visible active (pressed) state */
     .flat-tag-mode-button.is-active {
       background-color: var(--interactive-accent);
       color: var(--text-on-accent);
@@ -75,12 +72,11 @@ export const getStyles = (): string => {
       box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
     }
 
-    /* Hover effect when active */
     .flat-tag-mode-button.is-active:hover {
       background-color: var(--interactive-accent-hover);
       border-color: var(--interactive-accent-hover);
     }
-    
+
     .flat-tag-search-section {
       display: flex;
       align-items: center;
@@ -92,7 +88,7 @@ export const getStyles = (): string => {
       flex-grow: 1;
       max-width: 200px;
     }
-    
+
     .flat-tag-search-input {
       background: transparent;
       border: none;
@@ -101,17 +97,10 @@ export const getStyles = (): string => {
       height: 24px;
       font-size: 0.9em;
     }
-    
+
     .flat-tag-search-input:focus {
       outline: none;
       box-shadow: none;
-    }
-    
-    .flat-tag-search-icon {
-      color: var(--text-muted);
-      display: flex;
-      align-items: center;
-      justify-content: center;
     }
 
     .flat-tag-search-clear-button {
@@ -148,6 +137,70 @@ export const getStyles = (): string => {
 
     .flat-tag-sort-button.is-active:hover {
       background-color: var(--interactive-accent-hover);
+    }
+
+    /* Cutoff controls (lives inside .flat-tag-buttons-section) */
+    .flat-tag-cutoff-spacer {
+      flex: 0 0 8px;
+      width: 8px;
+      height: 1px;
+    }
+
+    .flat-tag-cutoff-section {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 2px 8px;
+      border-radius: var(--radius-s);
+      border: 1px solid var(--background-modifier-border);
+      background: linear-gradient(180deg, var(--background-secondary) 0%, var(--background-primary) 100%);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+      height: 28px;
+    }
+
+    .flat-tag-cutoff-toggle {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-muted);
+      padding: 2px;
+      border-radius: var(--radius-s);
+    }
+
+    .flat-tag-cutoff-toggle:hover {
+      color: var(--text-normal);
+      background-color: var(--background-modifier-hover);
+    }
+
+    .flat-tag-cutoff-toggle.is-enabled {
+      color: var(--interactive-accent);
+    }
+
+    .flat-tag-cutoff-toggle.is-disabled {
+      opacity: 0.7;
+    }
+
+    .flat-tag-cutoff-input {
+      width: 44px;
+      height: 22px;
+      border: none;
+      background: transparent;
+      padding: 0;
+      margin: 0;
+      text-align: center;
+      font-size: 0.9em;
+      color: var(--text-normal);
+    }
+
+    .flat-tag-cutoff-input:focus {
+      outline: none;
+      box-shadow: none;
+    }
+
+    .flat-tag-cutoff-input:disabled {
+      color: var(--text-faint);
+      cursor: not-allowed;
     }
 
     .flat-tag-list {
@@ -187,7 +240,7 @@ export const getStyles = (): string => {
       background-color: var(--color-red);
       color: var(--text-on-accent);
     }
-    
+
     .flat-tag-letter {
       display: inline-flex;
       font-weight: bold;
@@ -214,17 +267,15 @@ export const getStyles = (): string => {
       margin-bottom: 4px;
     }
 
-
     .flat-tag-separator {
       width: 100%;
       height: 1px;
       background-color: var(--background-modifier-border);
       margin: 4px 0 8px 0;
     }
-    
+
     .flat-tag-pinned {
       border: 1px solid var(--interactive-accent);
     }
-
   `;
 };

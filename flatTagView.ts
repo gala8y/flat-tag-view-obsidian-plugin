@@ -13,6 +13,9 @@ export class FlatTagView extends ItemView {
     private scopeBtn: HTMLElement;
     private taskBtn: HTMLElement;
 
+    private cutoffToggleBtn: HTMLElement;
+    private cutoffInput: HTMLInputElement;
+
     private selectedTags: Set<string> = new Set();
     private excludedTags: Set<string> = new Set();
     private allTags: Map<string, number> = new Map();
@@ -63,6 +66,37 @@ export class FlatTagView extends ItemView {
         this.taskBtn = buttonSection.createDiv({
             cls: "flat-tag-mode-button", text: "TASK-ALL", title: "Click to cycle: All -> Todo -> Done"
         });
+
+        // Cutoff UI (button + numeric field) lives between TASK and search
+        const cutoffSpacer = buttonSection.createDiv({ cls: "flat-tag-cutoff-spacer" });
+        cutoffSpacer.ariaHidden = "true";
+
+        const cutoffSection = buttonSection.createDiv({ cls: "flat-tag-cutoff-section" });
+
+        this.cutoffToggleBtn = cutoffSection.createDiv({ cls: "flat-tag-cutoff-toggle", title: "Toggle frequency cutoff" });
+        this.cutoffToggleBtn.addEventListener("click", async () => {
+            if (!this.plugin.settings) return;
+            this.plugin.settings.frequencyCutoffEnabled = !this.plugin.settings.frequencyCutoffEnabled;
+            await this.plugin.saveSettings();
+            this.syncCutoffControlsFromSettings();
+            this.renderTags();
+        });
+
+        this.cutoffInput = cutoffSection.createEl("input", {
+            cls: "flat-tag-cutoff-input",
+            attr: { type: "number", min: "0", step: "1", inputmode: "numeric", placeholder: "0" }
+        });
+        this.cutoffInput.addEventListener("input", async () => {
+            if (!this.plugin.settings) return;
+            const parsed = parseInt(this.cutoffInput.value, 10);
+            if (!isNaN(parsed) && parsed >= 0) {
+                this.plugin.settings.frequencyCutoff = parsed;
+                await this.plugin.saveSettings();
+                this.renderTags();
+            }
+        });
+
+        this.syncCutoffControlsFromSettings();
 
         this.sortAzBtn.addEventListener("click", () => {
             this.currentSort = "az";
@@ -115,6 +149,7 @@ export class FlatTagView extends ItemView {
             }
         }));
         this.registerEvent(this.app.workspace.on("flat-tag-view:settings-updated" as any, () => {
+            this.syncCutoffControlsFromSettings();
             this.renderTags();
         }));
     }
@@ -447,7 +482,8 @@ export class FlatTagView extends ItemView {
             }
         });
 
-        const cutoff = this.plugin.settings?.frequencyCutoff || 0;
+        const cutoffEnabled = this.plugin.settings?.frequencyCutoffEnabled ?? false;
+        const cutoff = cutoffEnabled ? (this.plugin.settings?.frequencyCutoff || 0) : 0;
         const safePinned = this.plugin.settings?.pinnedTags || [];
 
         if (cutoff > 0) {
@@ -565,6 +601,27 @@ export class FlatTagView extends ItemView {
         }
 
         return tags;
+    }
+
+    private syncCutoffControlsFromSettings() {
+        if (!this.cutoffToggleBtn || !this.cutoffInput) return;
+
+        const enabled = this.plugin.settings?.frequencyCutoffEnabled ?? false;
+        const cutoff = this.plugin.settings?.frequencyCutoff ?? 0;
+
+        this.cutoffInput.value = String(cutoff);
+        this.cutoffInput.disabled = !enabled;
+
+        this.cutoffToggleBtn.removeClass("is-enabled");
+        this.cutoffToggleBtn.removeClass("is-disabled");
+
+        if (enabled) {
+            this.cutoffToggleBtn.addClass("is-enabled");
+            setIcon(this.cutoffToggleBtn, "eye");
+        } else {
+            this.cutoffToggleBtn.addClass("is-disabled");
+            setIcon(this.cutoffToggleBtn, "eye-off");
+        }
     }
 
     public updateModeUI(skipSearch: boolean = false) {

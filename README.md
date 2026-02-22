@@ -20,7 +20,7 @@ FTV works on Obsidian for Android and (probably) on iOS (not tested) without any
 
 ### _vibe coded w/ ai_
 - _0.1.0 claude 3.7 sonnet / 4o_
-- _0.2.0 gemini 3.1 pro_
+- _0.2.2 gemini 3.1 pro_
 
 ### ver. 0.2.2 changelog
 - optimized view update logic (now ftv view updates quickly after current note changes)

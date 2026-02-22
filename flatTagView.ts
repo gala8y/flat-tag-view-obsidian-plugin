@@ -449,6 +449,14 @@ export class FlatTagView extends ItemView {
       });
     }
     
+    // Keep excluded tags visible even when they fall outside the filtered scope
+    Array.from(this.excludedTags).forEach(tag => {
+        if (!filteredTags.has(tag)) {
+            filteredTags.set(tag, this.allTags.get(tag) || 0);
+        }
+    });
+
+
     const cutoff = this.plugin.settings?.frequencyCutoff || 0;
     const safePinned = this.plugin.settings?.pinnedTags || [];
     

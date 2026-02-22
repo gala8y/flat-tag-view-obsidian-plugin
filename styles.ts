@@ -201,16 +201,19 @@ export const getStyles = (): string => {
       justify-content: center;
       min-width: 24px;
     }
-        .flat-tag-pinned-section {
+
+    .flat-tag-pinned-section {
       width: 100%;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      background-color: var(--background-secondary-alt);
+      background-color: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
+      border: 1px solid color-mix(in srgb, var(--interactive-accent) 25%, transparent);
       padding: 4px;
       border-radius: var(--radius-s);
       margin-bottom: 4px;
     }
+
 
     .flat-tag-separator {
       width: 100%;

@@ -36,7 +36,7 @@ export default class FlatTagPlugin extends Plugin {
       name: "Toggle Flat Tag Sort (A-Z/Usage)",
       callback: () => {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.toggleSort();
+        if (view && typeof view.toggleSort === 'function') view.toggleSort();
       },
     });
 
@@ -45,25 +45,7 @@ export default class FlatTagPlugin extends Plugin {
       name: "Clear Flat Tag Selections",
       callback: () => {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.clearTagSelections();
-      },
-    });
-
-    this.addCommand({
-      id: "toggle-flat-tag-single-use",
-      name: "Toggle Flat Tag Single Use",
-      callback: () => {
-        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.toggleSingleUseTags();
-      },
-    });
-
-    this.addCommand({
-      id: "toggle-flat-tag-alphabet",
-      name: "Toggle Flat Tag Alphabet Letters",
-      callback: () => {
-        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.toggleAlphabetLetters();
+        if (view && typeof view.clearTagSelections === 'function') view.clearTagSelections();
       },
     });
 
@@ -72,7 +54,25 @@ export default class FlatTagPlugin extends Plugin {
       name: "Clear Flat Tag Search Box",
       callback: () => {
         const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view) view.clearSearchBox();
+        if (view && typeof view.clearSearchBox === 'function') view.clearSearchBox();
+      },
+    });
+
+    this.addCommand({
+      id: "toggle-flat-tag-scope-mode",
+      name: "Toggle Flat Tag Mode (Note/Line)",
+      callback: () => {
+        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
+        if (view && typeof view.toggleScopeMode === 'function') view.toggleScopeMode();
+      },
+    });
+
+    this.addCommand({
+      id: "toggle-flat-tag-task-mode",
+      name: "Cycle Flat Tag Task Mode (All/Todo/Done)",
+      callback: () => {
+        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
+        if (view && typeof view.toggleTaskMode === 'function') view.toggleTaskMode();
       },
     });
 
@@ -85,7 +85,6 @@ export default class FlatTagPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
-    // Notify the view that settings have changed so it can re-render
     this.app.workspace.trigger("flat-tag-view:settings-updated");
   }
 

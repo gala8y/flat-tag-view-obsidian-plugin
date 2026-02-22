@@ -8,11 +8,18 @@ export class FlatTagView extends ItemView {
   private tagContainer: HTMLElement;
   private sortContainer: HTMLElement;
   
+  private sortAzBtn: HTMLElement;
+  private sortCountBtn: HTMLElement;
+  private scopeBtn: HTMLElement;
+  private taskBtn: HTMLElement;
+
   private selectedTags: Set<string> = new Set();
   private excludedTags: Set<string> = new Set();
   private allTags: Map<string, number> = new Map();
   private currentSort: "az" | "count" = "az";
-  private tagsByFile: Map<string, Set<string>> = new Map();
+  
+  // CHANGED FROM Set<string> TO string[] SO WE COUNT TOTAL OCCURRENCES, NOT JUST FILES!
+  private tagsByFile: Map<string, string[]> = new Map();
   
   private tagSearchText: string = "";
   private searchMode: "note" | "line" | "task" | "task-todo" | "task-done" = "note";
@@ -42,11 +49,11 @@ export class FlatTagView extends ItemView {
   
     const buttonSection = this.sortContainer.createDiv({ cls: "flat-tag-buttons-section" });
   
-    const sortByAZ = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort A-Z" });
-    setIcon(sortByAZ, "lucide-sort-asc");
+    this.sortAzBtn = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort A-Z" });
+    setIcon(this.sortAzBtn, "lucide-sort-asc");
     
-    const sortByCount = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort by usage" });
-    setIcon(sortByCount, "lucide-bar-chart-2");
+    this.sortCountBtn = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort by usage" });
+    setIcon(this.sortCountBtn, "lucide-bar-chart-2");
   
     const clearButton = buttonSection.createDiv({ cls: "flat-tag-clear-button", title: "Clear tag selections" });
     setIcon(clearButton, "x");
@@ -54,99 +61,32 @@ export class FlatTagView extends ItemView {
       this.clearTagSelections();
     });
 
-    // Create Scope Button (Note / Line)
-    const scopeBtn = buttonSection.createDiv({ 
+    this.scopeBtn = buttonSection.createDiv({ 
       cls: "flat-tag-mode-button", 
       text: "NOTE",
       title: "Click to cycle: Note -> Line" 
     });
 
-    // Create Task Button (Task / Todo / Done)
-    const taskBtn = buttonSection.createDiv({ 
+    this.taskBtn = buttonSection.createDiv({ 
       cls: "flat-tag-mode-button", 
       text: "TASK-ALL",
       title: "Click to cycle: All -> Todo -> Done"
     });
 
-    const updateModeUI = () => {
-      // Update Sort Buttons Active State
-      sortByAZ.removeClass("is-active");
-      sortByCount.removeClass("is-active");
-      if (this.currentSort === "az") sortByAZ.addClass("is-active");
-      if (this.currentSort === "count") sortByCount.addClass("is-active");
-
-      // Update Mode Buttons Active State
-      scopeBtn.removeClass("is-active");
-      taskBtn.removeClass("is-active");
-      
-      if (this.searchMode === "note") {
-        scopeBtn.setText("NOTE");
-        scopeBtn.addClass("is-active");
-      } else if (this.searchMode === "line") {
-        scopeBtn.setText("LINE");
-        scopeBtn.addClass("is-active");
-      } else if (this.searchMode === "task") {
-        taskBtn.setText("TASK-ALL");
-        taskBtn.addClass("is-active");
-      } else if (this.searchMode === "task-todo") {
-        taskBtn.setText("TASK-TODO");
-        taskBtn.addClass("is-active");
-      } else if (this.searchMode === "task-done") {
-        taskBtn.setText("TASK-DONE");
-        taskBtn.addClass("is-active");
-      }
-      
-      if (["note", "line"].includes(this.searchMode)) {
-        if (!["TASK-ALL", "TASK-TODO", "TASK-DONE"].includes(taskBtn.innerText)) {
-          taskBtn.setText("TASK-ALL");
-        }
-      } else {
-        if (!["NOTE", "LINE"].includes(scopeBtn.innerText)) {
-          scopeBtn.setText("NOTE");
-        }
-      }
-
-      this.updateSearch(); 
-      if (this.tagContainer) {
-        this.renderTags();
-      }
-    };
-
-    // Event Listeners that call updateModeUI
-    sortByAZ.addEventListener("click", () => {
+    this.sortAzBtn.addEventListener("click", () => {
       this.currentSort = "az";
-      updateModeUI();
+      this.updateModeUI();
     });
 
-    sortByCount.addEventListener("click", () => {
+    this.sortCountBtn.addEventListener("click", () => {
       this.currentSort = "count";
-      updateModeUI();
+      this.updateModeUI();
     });
 
-    scopeBtn.addEventListener("click", () => {
-      if (["note", "line"].includes(this.searchMode)) {
-        this.searchMode = this.searchMode === "note" ? "line" : "note";
-      } else {
-        this.searchMode = scopeBtn.innerText === "LINE" ? "line" : "note";
-      }
-      updateModeUI();
-    });
-    
-    taskBtn.addEventListener("click", () => {
-      if (["task", "task-todo", "task-done"].includes(this.searchMode)) {
-        if (this.searchMode === "task") this.searchMode = "task-todo";
-        else if (this.searchMode === "task-todo") this.searchMode = "task-done";
-        else this.searchMode = "task";
-      } else {
-        if (taskBtn.innerText === "TASK-TODO") this.searchMode = "task-todo";
-        else if (taskBtn.innerText === "TASK-DONE") this.searchMode = "task-done";
-        else this.searchMode = "task";
-      }
-      updateModeUI();
-    });
+    this.scopeBtn.addEventListener("click", () => this.toggleScopeMode());
+    this.taskBtn.addEventListener("click", () => this.toggleTaskMode());
 
-    // Initialize UI states
-    updateModeUI();
+    this.updateModeUI();
   
     const searchSection = this.sortContainer.createDiv({ cls: "flat-tag-search-section" });
     
@@ -218,8 +158,9 @@ export class FlatTagView extends ItemView {
     const files = this.app.vault.getMarkdownFiles();
     
     for (const file of files) {
-      const fileTags = this.getFileTags(file);
-      this.tagsByFile.set(file.path, new Set(fileTags));
+      const fileTags = this.getFileTags(file); // Now returns all duplicates!
+      this.tagsByFile.set(file.path, fileTags);
+      
       fileTags.forEach(tag => {
         this.allTags.set(tag, (this.allTags.get(tag) || 0) + 1);
       });
@@ -229,30 +170,27 @@ export class FlatTagView extends ItemView {
   }
 
   private updateFileTags(file: TFile) {
-    const oldTags = this.tagsByFile.get(file.path) || new Set<string>();
+    const oldTagsArr = this.tagsByFile.get(file.path) || [];
     const newTagsArr = this.getFileTags(file);
-    const newTags = new Set(newTagsArr);
     
-    let hasChanges = false;
+    // Sort and join arrays to quickly check if the exact tags and counts have changed
+    const oldSorted = [...oldTagsArr].sort().join(",");
+    const newSorted = [...newTagsArr].sort().join(",");
     
-    oldTags.forEach(tag => {
-      if (!newTags.has(tag)) {
-        hasChanges = true;
+    if (oldSorted !== newSorted) {
+      // Decrement the old tag occurrences
+      oldTagsArr.forEach(tag => {
         const count = (this.allTags.get(tag) || 0) - 1;
         if (count <= 0) this.allTags.delete(tag);
         else this.allTags.set(tag, count);
-      }
-    });
-    
-    newTags.forEach(tag => {
-      if (!oldTags.has(tag)) {
-        hasChanges = true;
+      });
+      
+      // Increment the new tag occurrences
+      newTagsArr.forEach(tag => {
         this.allTags.set(tag, (this.allTags.get(tag) || 0) + 1);
-      }
-    });
-    
-    if (hasChanges) {
-      this.tagsByFile.set(file.path, newTags);
+      });
+      
+      this.tagsByFile.set(file.path, newTagsArr);
       this.renderTags();
     }
   }
@@ -273,7 +211,6 @@ export class FlatTagView extends ItemView {
   async renderTags() {
     this.tagContainer.empty();
     
-    // Visually update sort buttons if toggleSort() was called by hotkey
     if (this.sortContainer) {
       const sortAzBtn = this.sortContainer.querySelector('.flat-tag-sort-button[title="Sort A-Z"]');
       const sortCountBtn = this.sortContainer.querySelector('.flat-tag-sort-button[title="Sort by usage"]');
@@ -458,8 +395,8 @@ export class FlatTagView extends ItemView {
       const selectedTagsArray = Array.from(this.selectedTags);
       const matchingFiles: string[] = [];
       
-      this.tagsByFile.forEach((tags, filePath) => {
-        if (selectedTagsArray.every(tag => tags.has(tag))) {
+      this.tagsByFile.forEach((tagsArr, filePath) => {
+        if (selectedTagsArray.every(tag => tagsArr.includes(tag))) {
           matchingFiles.push(filePath);
         }
       });
@@ -597,12 +534,11 @@ export class FlatTagView extends ItemView {
     const cache = this.app.metadataCache.getFileCache(file);
     if (!cache) return [];
     
-    const tags = new Set<string>();
+    const tags: string[] = []; // Changed to array to allow duplicates
     
     if (cache.tags) {
       cache.tags.forEach(tagObj => {
-        const tag = tagObj.tag.replace(/^#/, "");
-        tags.add(tag);
+        tags.push(tagObj.tag.replace(/^#/, ""));
       });
     }
     
@@ -610,21 +546,89 @@ export class FlatTagView extends ItemView {
       const fmTags = cache.frontmatter.tags;
       if (typeof fmTags === 'string') {
         fmTags.split(/[\s,]+/).filter(Boolean).forEach(tag => {
-          tags.add(tag);
+          tags.push(tag);
         });
       } else if (Array.isArray(fmTags)) {
         fmTags.forEach(tag => {
-          if (tag) tags.add(String(tag));
+          if (tag) tags.push(String(tag));
         });
       }
     }
     
-    return Array.from(tags);
+    return tags;
+  }
+
+  public updateModeUI() {
+    if (!this.sortAzBtn || !this.sortCountBtn || !this.scopeBtn || !this.taskBtn) return;
+    
+    this.sortAzBtn.removeClass("is-active");
+    this.sortCountBtn.removeClass("is-active");
+    if (this.currentSort === "az") this.sortAzBtn.addClass("is-active");
+    if (this.currentSort === "count") this.sortCountBtn.addClass("is-active");
+
+    this.scopeBtn.removeClass("is-active");
+    this.taskBtn.removeClass("is-active");
+    
+    if (this.searchMode === "note") {
+      this.scopeBtn.setText("NOTE");
+      this.scopeBtn.addClass("is-active");
+    } else if (this.searchMode === "line") {
+      this.scopeBtn.setText("LINE");
+      this.scopeBtn.addClass("is-active");
+    } else if (this.searchMode === "task") {
+      this.taskBtn.setText("TASK-ALL");
+      this.taskBtn.addClass("is-active");
+    } else if (this.searchMode === "task-todo") {
+      this.taskBtn.setText("TASK-TODO");
+      this.taskBtn.addClass("is-active");
+    } else if (this.searchMode === "task-done") {
+      this.taskBtn.setText("TASK-DONE");
+      this.taskBtn.addClass("is-active");
+    }
+    
+    if (["note", "line"].includes(this.searchMode)) {
+      if (!["TASK-ALL", "TASK-TODO", "TASK-DONE"].includes(this.taskBtn.innerText)) {
+        this.taskBtn.setText("TASK-ALL");
+      }
+    } else {
+      if (!["NOTE", "LINE"].includes(this.scopeBtn.innerText)) {
+        this.scopeBtn.setText("NOTE");
+      }
+    }
+
+    this.updateSearch(); 
+    if (this.tagContainer) {
+      this.renderTags();
+    }
+  }
+
+  public toggleScopeMode() {
+    if (!this.scopeBtn) return;
+    if (["note", "line"].includes(this.searchMode)) {
+      this.searchMode = this.searchMode === "note" ? "line" : "note";
+    } else {
+      this.searchMode = this.scopeBtn.innerText === "LINE" ? "line" : "note";
+    }
+    this.updateModeUI();
+  }
+
+  public toggleTaskMode() {
+    if (!this.taskBtn) return;
+    if (["task", "task-todo", "task-done"].includes(this.searchMode)) {
+      if (this.searchMode === "task") this.searchMode = "task-todo";
+      else if (this.searchMode === "task-todo") this.searchMode = "task-done";
+      else this.searchMode = "task";
+    } else {
+      if (this.taskBtn.innerText === "TASK-TODO") this.searchMode = "task-todo";
+      else if (this.taskBtn.innerText === "TASK-DONE") this.searchMode = "task-done";
+      else this.searchMode = "task";
+    }
+    this.updateModeUI();
   }
 
   public toggleSort() {
     this.currentSort = this.currentSort === "az" ? "count" : "az";
-    this.renderTags();
+    this.updateModeUI();
   }
 
   public clearTagSelections() {

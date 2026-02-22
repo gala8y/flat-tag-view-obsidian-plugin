@@ -42,11 +42,11 @@ var FlatTagView = class extends import_obsidian.ItemView {
     this.excludedTags = /* @__PURE__ */ new Set();
     this.allTags = /* @__PURE__ */ new Map();
     this.currentSort = "az";
-    // CHANGED FROM Set<string> TO string[] SO WE COUNT TOTAL OCCURRENCES, NOT JUST FILES!
     this.tagsByFile = /* @__PURE__ */ new Map();
     this.tagSearchText = "";
     this.searchMode = "note";
     this.touchTimer = null;
+    this.lastInteractionWasTouch = false;
     this.plugin = plugin;
     this.containerEl.addClass("flat-tag-view");
   }
@@ -61,6 +61,13 @@ var FlatTagView = class extends import_obsidian.ItemView {
   }
   async onOpen() {
     this.container = this.contentEl.createDiv({ cls: "flat-tag-container" });
+    this.containerEl.addEventListener("touchstart", () => {
+      this.lastInteractionWasTouch = true;
+    }, { passive: true });
+    this.containerEl.addEventListener("pointerdown", (e) => {
+      if (e.pointerType && e.pointerType !== "touch")
+        this.lastInteractionWasTouch = false;
+    }, { passive: true });
     this.sortContainer = this.container.createDiv({ cls: "flat-tag-sort-container" });
     const buttonSection = this.sortContainer.createDiv({ cls: "flat-tag-buttons-section" });
     this.sortAzBtn = buttonSection.createDiv({ cls: "flat-tag-sort-button", title: "Sort A-Z" });
@@ -84,27 +91,21 @@ var FlatTagView = class extends import_obsidian.ItemView {
     });
     this.sortAzBtn.addEventListener("click", () => {
       this.currentSort = "az";
-      this.updateModeUI();
+      this.updateModeUI(true);
     });
     this.sortCountBtn.addEventListener("click", () => {
       this.currentSort = "count";
-      this.updateModeUI();
+      this.updateModeUI(true);
     });
     this.scopeBtn.addEventListener("click", () => this.toggleScopeMode());
     this.taskBtn.addEventListener("click", () => this.toggleTaskMode());
-    this.updateModeUI();
+    this.updateModeUI(true);
     const searchSection = this.sortContainer.createDiv({ cls: "flat-tag-search-section" });
     const searchBox = searchSection.createEl("input", {
       cls: "flat-tag-search-input",
-      attr: {
-        type: "text",
-        placeholder: "Search tags..."
-      }
+      attr: { type: "text", placeholder: "Search tags..." }
     });
-    const clearSearchButton = searchSection.createDiv({
-      cls: "flat-tag-search-clear-button",
-      title: "Clear search"
-    });
+    const clearSearchButton = searchSection.createDiv({ cls: "flat-tag-search-clear-button", title: "Clear search" });
     (0, import_obsidian.setIcon)(clearSearchButton, "square-x");
     clearSearchButton.addEventListener("click", () => {
       this.clearSearchBox();
@@ -116,35 +117,27 @@ var FlatTagView = class extends import_obsidian.ItemView {
     });
     this.tagContainer = this.container.createDiv({ cls: "flat-tag-list" });
     await this.loadTags();
-    this.registerEvent(
-      this.app.metadataCache.on("changed", (file) => {
-        this.updateFileTags(file);
-      })
-    );
-    this.registerEvent(
-      this.app.vault.on("delete", (file) => {
-        if (file instanceof import_obsidian.TFile && file.extension === "md") {
-          this.removeFileTags(file.path);
-          this.renderTags();
-        }
-      })
-    );
-    this.registerEvent(
-      this.app.vault.on("rename", (file, oldPath) => {
-        if (file instanceof import_obsidian.TFile && file.extension === "md") {
-          const tags = this.tagsByFile.get(oldPath);
-          if (tags) {
-            this.tagsByFile.set(file.path, tags);
-            this.tagsByFile.delete(oldPath);
-          }
-        }
-      })
-    );
-    this.registerEvent(
-      this.app.workspace.on("flat-tag-view:settings-updated", () => {
+    this.registerEvent(this.app.metadataCache.on("changed", (file) => {
+      this.updateFileTags(file);
+    }));
+    this.registerEvent(this.app.vault.on("delete", (file) => {
+      if (file instanceof import_obsidian.TFile && file.extension === "md") {
+        this.removeFileTags(file.path);
         this.renderTags();
-      })
-    );
+      }
+    }));
+    this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
+      if (file instanceof import_obsidian.TFile && file.extension === "md") {
+        const tags = this.tagsByFile.get(oldPath);
+        if (tags) {
+          this.tagsByFile.set(file.path, tags);
+          this.tagsByFile.delete(oldPath);
+        }
+      }
+    }));
+    this.registerEvent(this.app.workspace.on("flat-tag-view:settings-updated", () => {
+      this.renderTags();
+    }));
   }
   async loadTags() {
     this.allTags.clear();
@@ -213,11 +206,10 @@ var FlatTagView = class extends import_obsidian.ItemView {
     const safePinnedList = ((_a = this.plugin.settings) == null ? void 0 : _a.pinnedTags) || [];
     const pinnedSet = new Set(safePinnedList);
     filteredTags.forEach((count, tag) => {
-      if (pinnedSet.has(tag)) {
+      if (pinnedSet.has(tag))
         pinnedTags.set(tag, count);
-      } else {
+      else
         normalTags.set(tag, count);
-      }
     });
     if (pinnedTags.size > 0) {
       const pinContainer = this.tagContainer.createDiv({ cls: "flat-tag-pinned-section" });
@@ -233,7 +225,11 @@ var FlatTagView = class extends import_obsidian.ItemView {
     if (this.currentSort === "az") {
       sortedTags = Array.from(normalTags.entries()).sort((a, b) => a[0].localeCompare(b[0], "pl"));
     } else {
-      sortedTags = Array.from(normalTags.entries()).sort((a, b) => b[1] - a[1]);
+      sortedTags = Array.from(normalTags.entries()).sort((a, b) => {
+        if (b[1] !== a[1])
+          return b[1] - a[1];
+        return a[0].localeCompare(b[0], "pl");
+      });
     }
     if (this.currentSort === "az") {
       const tagsByLetter = /* @__PURE__ */ new Map();
@@ -283,6 +279,8 @@ var FlatTagView = class extends import_obsidian.ItemView {
     if (safePinned.includes(tag))
       tagEl.addClass("flat-tag-pinned");
     tagEl.setText(`#${tag} (${count})`);
+    tagEl.style.userSelect = "none";
+    tagEl.style.webkitUserSelect = "none";
     const handleTagInteraction = async (isMultiSelect, isExclude, isPin) => {
       if (isPin) {
         if (!this.plugin.settings)
@@ -321,33 +319,86 @@ var FlatTagView = class extends import_obsidian.ItemView {
         }
       }
       this.renderTags();
-      this.updateSearch();
+      void this.updateSearch();
     };
     tagEl.addEventListener("click", (e) => {
       e.preventDefault();
       handleTagInteraction(e.ctrlKey || e.metaKey, e.shiftKey, e.altKey);
     });
+    let touchStartX = 0;
+    let touchStartY = 0;
+    let isSwiping = false;
     tagEl.addEventListener("touchstart", (e) => {
+      const touch = e.touches[0];
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      isSwiping = false;
       this.touchTimer = window.setTimeout(() => {
         this.touchTimer = null;
-        const isCurrentlySelected = this.selectedTags.has(tag);
-        handleTagInteraction(!isCurrentlySelected, isCurrentlySelected, false);
+        if (!isSwiping) {
+          handleTagInteraction(true, false, false);
+        }
       }, 500);
     }, { passive: true });
+    tagEl.addEventListener("touchmove", (e) => {
+      const touch = e.touches[0];
+      const deltaX = touch.clientX - touchStartX;
+      const deltaY = touch.clientY - touchStartY;
+      if (!isSwiping) {
+        if (Math.abs(deltaX) > 10 && Math.abs(deltaX) > Math.abs(deltaY)) {
+          if (this.touchTimer) {
+            window.clearTimeout(this.touchTimer);
+            this.touchTimer = null;
+          }
+          isSwiping = true;
+        } else if (Math.abs(deltaY) > 10) {
+          if (this.touchTimer) {
+            window.clearTimeout(this.touchTimer);
+            this.touchTimer = null;
+          }
+          return;
+        }
+      }
+      if (isSwiping && deltaX < 0) {
+        e.preventDefault();
+        const capped = Math.max(deltaX, -90);
+        tagEl.style.transform = `translateX(${capped}px)`;
+        tagEl.style.opacity = String(0.5 + Math.abs(capped) / 90 * 0.5);
+      }
+    }, { passive: false });
     tagEl.addEventListener("touchend", (e) => {
+      const touch = e.changedTouches[0];
+      const deltaX = touch.clientX - touchStartX;
+      tagEl.style.transition = "transform 0.2s ease, opacity 0.2s ease";
+      tagEl.style.transform = "";
+      tagEl.style.opacity = "";
+      setTimeout(() => {
+        tagEl.style.transition = "";
+      }, 220);
+      if (isSwiping) {
+        isSwiping = false;
+        if (deltaX <= -60)
+          handleTagInteraction(false, false, true);
+        return;
+      }
       if (this.touchTimer) {
         window.clearTimeout(this.touchTimer);
         this.touchTimer = null;
         handleTagInteraction(false, false, false);
-      } else {
-        e.preventDefault();
       }
-    });
-    tagEl.addEventListener("touchmove", () => {
+    }, { passive: true });
+    tagEl.addEventListener("touchcancel", () => {
+      isSwiping = false;
       if (this.touchTimer) {
         window.clearTimeout(this.touchTimer);
         this.touchTimer = null;
       }
+      tagEl.style.transition = "transform 0.2s ease, opacity 0.2s ease";
+      tagEl.style.transform = "";
+      tagEl.style.opacity = "";
+      setTimeout(() => {
+        tagEl.style.transition = "";
+      }, 220);
     }, { passive: true });
   }
   async getFilteredTagsAsync() {
@@ -409,6 +460,11 @@ var FlatTagView = class extends import_obsidian.ItemView {
         }
       });
     }
+    Array.from(this.excludedTags).forEach((tag) => {
+      if (!filteredTags.has(tag)) {
+        filteredTags.set(tag, this.allTags.get(tag) || 0);
+      }
+    });
     const cutoff = ((_a = this.plugin.settings) == null ? void 0 : _a.frequencyCutoff) || 0;
     const safePinned = ((_b = this.plugin.settings) == null ? void 0 : _b.pinnedTags) || [];
     if (cutoff > 0) {
@@ -432,25 +488,38 @@ var FlatTagView = class extends import_obsidian.ItemView {
     }
     return filteredTags;
   }
-  updateSearch() {
-    let searchLeaf = this.app.workspace.getLeavesOfType("search")[0];
-    if (!searchLeaf) {
-      const rightLeaf = this.app.workspace.getRightLeaf(false);
+  async updateSearch(options) {
+    var _a, _b;
+    const workspace = this.app.workspace;
+    const prevLeaf = workspace.activeLeaf;
+    const isTouchContext = import_obsidian.Platform.isMobile || this.lastInteractionWasTouch;
+    const revealSearch = (_a = options == null ? void 0 : options.revealSearch) != null ? _a : !isTouchContext;
+    const createIfMissing = (_b = options == null ? void 0 : options.createIfMissing) != null ? _b : !isTouchContext;
+    let searchLeaf = workspace.getLeavesOfType("search")[0];
+    if (!searchLeaf && createIfMissing) {
+      const rightLeaf = workspace.getRightLeaf(true);
       if (rightLeaf) {
         searchLeaf = rightLeaf;
-        searchLeaf.setViewState({ type: "search" });
+        await searchLeaf.setViewState({ type: "search", active: false });
       }
     }
+    if (searchLeaf && revealSearch) {
+      workspace.revealLeaf(searchLeaf);
+    }
+    if (prevLeaf) {
+      workspace.setActiveLeaf(prevLeaf, { focus: true });
+    }
+    this.lastInteractionWasTouch = false;
+    if (!searchLeaf)
+      return;
     if (this.selectedTags.size === 0 && this.excludedTags.size === 0) {
-      if (searchLeaf) {
-        const searchView = searchLeaf.view;
-        if (searchView) {
-          const clearBtn = searchView.containerEl.querySelector(".search-input-clear-button");
-          if (clearBtn) {
-            clearBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: false }));
-          } else if (typeof searchView.setQuery === "function") {
-            searchView.setQuery("");
-          }
+      const searchView2 = searchLeaf.view;
+      if (searchView2) {
+        const clearBtn = searchView2.containerEl.querySelector(".search-input-clear-button");
+        if (clearBtn) {
+          clearBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: false }));
+        } else if (typeof searchView2.setQuery === "function") {
+          searchView2.setQuery("");
         }
       }
       return;
@@ -477,11 +546,9 @@ var FlatTagView = class extends import_obsidian.ItemView {
       ].join(" ");
       tagQuery = `${prefix} ${blockContents} )`;
     }
-    if (searchLeaf) {
-      const searchView = searchLeaf.view;
-      if (searchView && typeof searchView.setQuery === "function") {
-        searchView.setQuery(tagQuery);
-      }
+    const searchView = searchLeaf.view;
+    if (searchView && typeof searchView.setQuery === "function") {
+      searchView.setQuery(tagQuery);
     }
   }
   getFileTags(file) {
@@ -509,7 +576,7 @@ var FlatTagView = class extends import_obsidian.ItemView {
     }
     return tags;
   }
-  updateModeUI() {
+  updateModeUI(skipSearch = false) {
     if (!this.sortAzBtn || !this.sortCountBtn || !this.scopeBtn || !this.taskBtn)
       return;
     this.sortAzBtn.removeClass("is-active");
@@ -545,7 +612,9 @@ var FlatTagView = class extends import_obsidian.ItemView {
         this.scopeBtn.setText("NOTE");
       }
     }
-    this.updateSearch();
+    if (!skipSearch) {
+      void this.updateSearch();
+    }
     if (this.tagContainer) {
       this.renderTags();
     }
@@ -582,13 +651,13 @@ var FlatTagView = class extends import_obsidian.ItemView {
   }
   toggleSort() {
     this.currentSort = this.currentSort === "az" ? "count" : "az";
-    this.updateModeUI();
+    this.updateModeUI(true);
   }
   clearTagSelections() {
     this.selectedTags.clear();
     this.excludedTags.clear();
     this.renderTags();
-    this.updateSearch();
+    void this.updateSearch({ revealSearch: false, createIfMissing: false });
   }
   clearSearchBox() {
     const searchBox = this.contentEl.querySelector(".flat-tag-search-input");
@@ -804,16 +873,19 @@ var getStyles = () => {
       justify-content: center;
       min-width: 24px;
     }
-        .flat-tag-pinned-section {
+
+    .flat-tag-pinned-section {
       width: 100%;
       display: flex;
       flex-wrap: wrap;
       align-items: center;
-      background-color: var(--background-secondary-alt);
+      background-color: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
+      border: 1px solid color-mix(in srgb, var(--interactive-accent) 25%, transparent);
       padding: 4px;
       border-radius: var(--radius-s);
       margin-bottom: 4px;
     }
+
 
     .flat-tag-separator {
       width: 100%;

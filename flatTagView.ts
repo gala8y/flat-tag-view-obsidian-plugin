@@ -491,8 +491,17 @@ export class FlatTagView extends ItemView {
     if (this.selectedTags.size === 0 && this.excludedTags.size === 0) {
       if (searchLeaf) {
         const searchView = searchLeaf.view as any;
-        if (searchView && typeof searchView.setQuery === "function") {
-          searchView.setQuery("");
+        
+        if (searchView) {
+          // Click Obsidian's own native clear button - this is the clean, official way!
+          // It clears the query, results, and result count without triggering the autocomplete popup.
+          const clearBtn = searchView.containerEl.querySelector('.search-input-clear-button') as HTMLElement;
+          if (clearBtn) {
+            clearBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: false }));
+          } else if (typeof searchView.setQuery === "function") {
+            // Fallback if the clear button doesn't exist for some reason
+            searchView.setQuery("");
+          }
         }
       }
       return;
@@ -529,6 +538,8 @@ export class FlatTagView extends ItemView {
       this.app.workspace.revealLeaf(searchLeaf);
     }
   }
+
+
 
   getFileTags(file: TFile): string[] {
     const cache = this.app.metadataCache.getFileCache(file);

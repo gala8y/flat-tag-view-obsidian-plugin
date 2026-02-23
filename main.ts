@@ -1,251 +1,608 @@
-import { Plugin, WorkspaceLeaf, MarkdownView, Editor, EditorPosition } from "obsidian";
-import { FlatTagView } from "./flatTagView";
+import { Editor, EditorPosition, MarkdownView, Notice, Platform, Plugin, WorkspaceLeaf } from "obsidian";
+
 import { VIEW_TYPE } from "./constants";
+import { FlatTagView } from "./flatTagView";
 import { getStyles } from "./styles";
-import {
-  FlatTagPluginSettings,
-  DEFAULT_SETTINGS,
-  FlatTagSettingTab,
-  AltClickTagMode,
-} from "./settings";
+import { AltClickTagMode, DEFAULT_SETTINGS, FlatTagPluginSettings, FlatTagSettingTab } from "./settings";
+
+type EditorRange = { from: EditorPosition; to: EditorPosition };
+type Candidate = { raw: string; range?: EditorRange };
 
 export default class FlatTagPlugin extends Plugin {
-  settings: FlatTagPluginSettings;
+    settings: FlatTagPluginSettings;
+    private statusBarEl: HTMLElement | null = null;
 
-  async onload() {
-    await this.loadSettings();
+    async onload() {
+        await this.loadSettings();
 
-    this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new FlatTagView(leaf, this));
+        this.registerView(VIEW_TYPE, (leaf: WorkspaceLeaf) => new FlatTagView(leaf, this));
+        this.addRibbonIcon("tag", "Open Flat Tags", () => void this.activateView());
+        this.addSettingTab(new FlatTagSettingTab(this.app, this));
 
-    this.addRibbonIcon("tag", "Open Flat Tags", () => {
-      this.activateView();
-    });
+        this.addCommand({
+            id: "open-flat-tags",
+            name: "Open Flat Tags",
+            callback: () => void this.activateView(),
+        });
 
-    this.addSettingTab(new FlatTagSettingTab(this.app, this));
+        this.addCommand({
+            id: "toggle-flat-tag-sort",
+            name: "Toggle Flat Tag Sort (A-Z/Usage)",
+            callback: () => {
+                const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
+                if (view && typeof view.toggleSort === "function") view.toggleSort();
+            },
+        });
 
-    this.addCommand({
-      id: "open-flat-tags",
-      name: "Open Flat Tags",
-      callback: () => this.activateView(),
-    });
+        this.addCommand({
+            id: "clear-flat-tag-selections",
+            name: "Clear Flat Tag Selections",
+            callback: () => {
+                const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
+                if (view && typeof view.clearTagSelections === "function") view.clearTagSelections();
+            },
+        });
 
-    this.addCommand({
-      id: "toggle-flat-tag-sort",
-      name: "Toggle Flat Tag Sort (A-Z/Usage)",
-      callback: () => {
-        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view && typeof view.toggleSort === "function") view.toggleSort();
-      },
-    });
+        this.addCommand({
+            id: "clear-flat-tag-search",
+            name: "Clear Flat Tag Search Box",
+            callback: () => {
+                const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
+                if (view && typeof view.clearSearchBox === "function") view.clearSearchBox();
+            },
+        });
 
-    this.addCommand({
-      id: "clear-flat-tag-selections",
-      name: "Clear Flat Tag Selections",
-      callback: () => {
-        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view && typeof view.clearTagSelections === "function") view.clearTagSelections();
-      },
-    });
+        this.addCommand({
+            id: "toggle-flat-tag-scope-mode",
+            name: "Toggle Flat Tag Mode (Note/Line)",
+            callback: () => {
+                const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
+                if (view && typeof view.toggleScopeMode === "function") view.toggleScopeMode();
+            },
+        });
 
-    this.addCommand({
-      id: "clear-flat-tag-search",
-      name: "Clear Flat Tag Search Box",
-      callback: () => {
-        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view && typeof view.clearSearchBox === "function") view.clearSearchBox();
-      },
-    });
+        this.addCommand({
+            id: "toggle-flat-tag-task-mode",
+            name: "Cycle Flat Tag Task Mode (All/Todo/Done)",
+            callback: () => {
+                const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
+                if (view && typeof view.toggleTaskMode === "function") view.toggleTaskMode();
+            },
+        });
 
-    this.addCommand({
-      id: "toggle-flat-tag-scope-mode",
-      name: "Toggle Flat Tag Mode (Note/Line)",
-      callback: () => {
-        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view && typeof view.toggleScopeMode === "function") view.toggleScopeMode();
-      },
-    });
+        this.addCommand({
+            id: "cycle-flat-tag-placement",
+            name: "Cycle Tag Placement (SOL / INP / EOL)",
+            callback: async () => {
+                const modes: AltClickTagMode[] = ["start-line", "in-place", "end-line"];
+                const current = this.settings.altClickTagMode;
+                const next = modes[(modes.indexOf(current) + 1) % modes.length];
 
-    this.addCommand({
-      id: "toggle-flat-tag-task-mode",
-      name: "Cycle Flat Tag Task Mode (All/Todo/Done)",
-      callback: () => {
-        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0]?.view as FlatTagView;
-        if (view && typeof view.toggleTaskMode === "function") view.toggleTaskMode();
-      },
-    });
+                this.settings.altClickTagMode = next;
+                await this.saveSettings();
 
-    this.addStyle();
+                const labels: Record<AltClickTagMode, string> = {
+                    "start-line": "Start of line",
+                    "in-place": "In place",
+                    "end-line": "End of line",
+                };
+                new Notice(`Tag placement: ${labels[next]}`);
+            },
+        });
 
-    // Alt-click in editor => create tag from selection/word
-    this.registerDomEvent(document, "click", (evt: MouseEvent) => {
-      if (!evt.altKey) return;
-      void this.handleEditorAltClick(evt);
-    });
-  }
+        this.addStyle();
 
-  private async handleEditorAltClick(evt: MouseEvent) {
-    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
-    if (!view) return;
+        // Status bar placement indicator
+        this.statusBarEl = this.addStatusBarItem();
+        this.updateStatusBar();
 
-    // Only in source/editor mode (avoid preview)
-    const anyView = view as any;
-    if (typeof anyView.getMode === "function" && anyView.getMode() !== "source") return;
+        // Desktop: Alt-click in editor
+        this.registerDomEvent(document, "click", (evt: MouseEvent) => {
+            if (!evt.altKey) return;
+            void this.handleEditorTrigger({ kind: "alt-click", mouseEvent: evt });
+        });
 
-    const target = evt.target as Node | null;
-    if (!target || !view.containerEl.contains(target)) return;
-
-    const editor = view.editor;
-    if (!editor) return;
-
-    const candidate = this.getTagCandidate(editor);
-    if (!candidate) return;
-
-    await this.applyAltClickTagMode(editor, this.settings.altClickTagMode, candidate);
-  }
-
-  private getTagCandidate(
-    editor: Editor
-  ): { text: string; range?: { from: EditorPosition; to: EditorPosition } } | null {
-    const sel = editor.getSelection();
-    if (sel && sel.trim() && !/\r|\n/.test(sel)) {
-      return { text: sel.trim() };
+        // Mobile: long press
+        this.registerMobileLongPress();
     }
 
-    const cursor = editor.getCursor();
-    const wordAt = (editor as any).wordAt?.(cursor);
-    if (!wordAt) return null;
-
-    const word = editor.getRange(wordAt.from, wordAt.to);
-    if (!word || !word.trim()) return null;
-
-    return { text: word.trim(), range: { from: wordAt.from, to: wordAt.to } };
-  }
-
-  private normalizeTagText(raw: string): string | null {
-    let t = raw.trim();
-    if (!t) return null;
-
-    // Strip leading '#'
-    t = t.replace(/^#+/, "");
-
-    // Trim common surrounding punctuation
-    t = t
-      .replace(/^[\s\.,;:!\?\)\]\}\"\']+/, "")
-      .replace(/[\s\.,;:!\?\(\[\{\"']+$/, "");
-    if (!t) return null;
-
-    // Disallow whitespace or internal '#'
-    if (/\s/.test(t)) return null;
-    if (t.includes("#")) return null;
-
-    return t;
-  }
-
-  private async applyAltClickTagMode(
-    editor: Editor,
-    mode: AltClickTagMode,
-    candidate: { text: string; range?: { from: EditorPosition; to: EditorPosition } }
-  ) {
-    const normalized = this.normalizeTagText(candidate.text);
-    if (!normalized) return;
-
-    const tagToken = `#${normalized}`;
-
-    if (mode === "in-place") {
-      if (editor.getSelection() && editor.getSelection().trim()) {
-        editor.replaceSelection(tagToken);
-        return;
-      }
-      if (candidate.range) {
-        editor.replaceRange(tagToken, candidate.range.from, candidate.range.to);
-      }
-      return;
+    onunload() {
+        this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+        if (this.statusBarEl) {
+            this.statusBarEl.remove();
+            this.statusBarEl = null;
+        }
     }
 
-    const line = editor.getCursor().line;
-    const lineText = editor.getLine(line);
+    // ── Status bar ──────────────────────────────────────────────────────────────ok
 
-    if (mode === "start-line") {
-      const { indent, tags, after } = this.parseLeadingTags(lineText);
-      if (tags.includes(tagToken)) return;
+    updateStatusBar() {
+        if (!this.statusBarEl) return;
 
-      const nextTags = [...tags, tagToken].sort((a, b) => a.localeCompare(b, "pl"));
-      const prefix = nextTags.length ? nextTags.join(" ") + (after.length ? " " : "") : "";
+        // No "as any" cast needed anymore!
+        // We default to true if the setting is undefined (backward compatibility)
+        const show = this.settings.showPlacementInStatusBar ?? true;
 
-      editor.replaceRange(indent + prefix + after, { line, ch: 0 }, { line, ch: lineText.length });
-      return;
+        if (!show) {
+            this.statusBarEl.setText("");
+            this.statusBarEl.hide();
+            return;
+        }
+
+        const labels: Record<AltClickTagMode, string> = {
+            "start-line": "SOL",
+            "in-place":   "INP",
+            "end-line":   "EOL",
+        };
+        
+        // Safety check in case mode is somehow undefined
+        const modeLabel = labels[this.settings.altClickTagMode] ?? "SOL";
+        
+        this.statusBarEl.setText(`#>${modeLabel}`);
+        this.statusBarEl.show();
     }
 
-    if (mode === "end-line") {
-      const { before, tags, trailingWs } = this.parseTrailingTags(lineText);
-      if (tags.includes(tagToken)) return;
 
-      const nextTags = [...tags, tagToken].sort((a, b) => a.localeCompare(b, "pl"));
-      const joiner = before.length ? " " : "";
-      const suffix = nextTags.length ? joiner + nextTags.join(" ") : "";
+    // ── Mobile long press ────────────────────────────────────────────────────────
 
-      editor.replaceRange(before + suffix + trailingWs, { line, ch: 0 }, { line, ch: lineText.length });
-      return;
+    private registerMobileLongPress() {
+        if (!Platform.isMobile) return;
+
+        let timer: number | null = null;
+        let startX = 0;
+        let startY = 0;
+        let cancelled = false;
+        let longPressArmed = false;
+
+        const clear = () => {
+            if (timer) window.clearTimeout(timer);
+            timer = null;
+            longPressArmed = false;
+        };
+
+        this.registerDomEvent(
+            document,
+            "touchstart",
+            (evt: TouchEvent) => {
+                if (!this.settings.mobileLongPressEnabled) return;
+                if (evt.touches.length !== 1) return;
+                cancelled = false;
+                longPressArmed = false;
+                const t = evt.touches[0];
+                startX = t.clientX;
+                startY = t.clientY;
+                clear();
+                const ms = Math.max(250, Math.min(5000, this.settings.mobileLongPressMs ?? 1000));
+                timer = window.setTimeout(() => {
+                    timer = null;
+                    if (cancelled) return;
+                    // Arm; fire on touchend after OS selection is established.
+                    longPressArmed = true;
+                }, ms);
+            },
+            { passive: true }
+        );
+
+        this.registerDomEvent(
+            document,
+            "touchmove",
+            (evt: TouchEvent) => {
+                if (!timer) return;
+                const t = evt.touches[0];
+                const dx = Math.abs(t.clientX - startX);
+                const dy = Math.abs(t.clientY - startY);
+                if (dx > 12 || dy > 12) { cancelled = true; clear(); }
+            },
+            { passive: true }
+        );
+
+        this.registerDomEvent(
+            document,
+            "touchend",
+            () => {
+                const shouldFire = longPressArmed && !cancelled;
+                clear();
+                if (!shouldFire) return;
+                void this.handleEditorTrigger({ kind: "mobile-long-press" });
+            },
+            { passive: true }
+        );
+
+        this.registerDomEvent(
+            document,
+            "touchcancel",
+            () => { cancelled = true; clear(); },
+            { passive: true }
+        );
     }
-  }
 
-  private parseLeadingTags(lineText: string): { indent: string; tags: string[]; after: string } {
-    const indent = (lineText.match(/^\s*/) ?? [""])[0];
-    const rest = lineText.slice(indent.length);
+    // ── Trigger entry-point ──────────────────────────────────────────────────────
 
-    const m = rest.match(/^((?:#[^\s#]+\s+)*)/);
-    const tagBlock = m?.[1] ?? "";
-    const tags = tagBlock.match(/#[^\s#]+/g) ?? [];
-    const after = rest.slice(tagBlock.length);
+    private async handleEditorTrigger(
+        trigger: { kind: "alt-click"; mouseEvent: MouseEvent } | { kind: "mobile-long-press" }
+    ) {
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!view) return;
 
-    return { indent, tags, after };
-  }
+        // Source / editor mode only
+        const anyView = view as any;
+        if (typeof anyView.getMode === "function" && anyView.getMode() !== "source") return;
 
-  private parseTrailingTags(lineText: string): { before: string; tags: string[]; trailingWs: string } {
-    const trimmedEnd = lineText.replace(/\s+$/, "");
-    const trailingWs = lineText.slice(trimmedEnd.length);
+        const editor = view.editor;
+        if (!editor) return;
 
-    const m = trimmedEnd.match(/(\s+(?:#[^\s#]+\s*)+)$/);
-    if (!m) return { before: trimmedEnd, tags: [], trailingWs };
+        // Mobile: require a real selection to avoid accidental triggers
+        if (trigger.kind === "mobile-long-press") {
+            const sel = editor.getSelection();
+            if (!sel || !sel.trim()) return;
+        }
 
-    const tagBlock = m[1];
-    const tags = tagBlock.match(/#[^\s#]+/g) ?? [];
-    const before = trimmedEnd.slice(0, trimmedEnd.length - tagBlock.length);
+        const candidate = this.getCandidateWithRange(editor, { preferSelection: Platform.isMobile });
+        if (!candidate) return;
 
-    return { before, tags, trailingWs };
-  }
-
-  async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-  }
-
-  async saveSettings() {
-    await this.saveData(this.settings);
-    this.app.workspace.trigger("flat-tag-view:settings-updated");
-  }
-
-  async onunload() {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
-  }
-
-  async activateView() {
-    const { workspace } = this.app;
-
-    let leaf = workspace.getLeavesOfType(VIEW_TYPE)[0];
-    if (!leaf) {
-      const rightLeaf = workspace.getRightLeaf(false);
-      if (rightLeaf) {
-        leaf = rightLeaf;
-        await leaf.setViewState({ type: VIEW_TYPE });
-      }
+        // AUTO-DETECT:
+        // Candidate starts with '#' => existing tag => remove.
+        // Plain word               => create tag (placement depends on altClickTagMode).
+        if (candidate.raw.startsWith("#")) {
+            await this.removeTag(editor, candidate);
+        } else {
+            await this.createTag(editor, this.settings.altClickTagMode, candidate);
+        }
     }
 
-    if (leaf) workspace.revealLeaf(leaf);
-  }
+    // ── Candidate resolution ─────────────────────────────────────────────────────
 
-  addStyle() {
-    const styleEl = document.createElement("style");
-    styleEl.innerHTML = getStyles();
-    document.head.appendChild(styleEl);
-  }
+    private getSelectionRange(editor: Editor): EditorRange | null {
+        const anyEditor = editor as any;
+        const from = anyEditor.getCursor?.("from") as EditorPosition | undefined;
+        const to = anyEditor.getCursor?.("to") as EditorPosition | undefined;
+        if (!from || !to) return null;
+        if (from.line === to.line && from.ch === to.ch) return null;
+        if (from.line > to.line || (from.line === to.line && from.ch > to.ch)) return { from: to, to: from };
+        return { from, to };
+    }
+
+    private buildSelCandidate(editor: Editor, sel: string, r: EditorRange): Candidate {
+        const raw = sel.trim();
+        if (!raw.startsWith("#") && r.from.ch > 0) {
+            const lineText = editor.getLine(r.from.line);
+            if (lineText.charAt(r.from.ch - 1) === "#") {
+                return {
+                    raw: "#" + raw,
+                    range: { from: { line: r.from.line, ch: r.from.ch - 1 }, to: r.to },
+                };
+            }
+        }
+        return { raw, range: r };
+    }
+
+    private getCandidateWithRange(editor: Editor, opts?: { preferSelection?: boolean }): Candidate | null {
+        const preferSelection = opts?.preferSelection ?? true;
+
+        const sel = editor.getSelection();
+        const selRange = this.getSelectionRange(editor);
+
+        if (preferSelection && sel && sel.trim() && !/[\r\n]/.test(sel) && selRange) {
+            return this.buildSelCandidate(editor, sel, selRange);
+        }
+
+        const token = this.getTokenAtCursor(editor);
+        if (token) return token;
+
+        if (!preferSelection && sel && sel.trim() && !/[\r\n]/.test(sel) && selRange) {
+            return this.buildSelCandidate(editor, sel, selRange);
+        }
+
+        return null;
+    }
+
+    private getTokenAtCursor(editor: Editor): Candidate | null {
+        const cursor = editor.getCursor();
+        const lineText = editor.getLine(cursor.line) ?? "";
+        if (!lineText) return null;
+
+        const isBodyChar = (ch: string) => /[\p{L}\p{N}_-]/u.test(ch);
+
+        let i = cursor.ch;
+        if (i >= lineText.length) i = lineText.length - 1;
+        if (i < 0) return null;
+
+        const cur = lineText.charAt(i);
+
+        // Case 1: cursor directly on '#'
+        if (cur === "#") {
+            let end = i + 1;
+            while (end < lineText.length && isBodyChar(lineText.charAt(end))) end++;
+            if (end === i + 1) return null;
+            return {
+                raw: lineText.slice(i, end),
+                range: { from: { line: cursor.line, ch: i }, to: { line: cursor.line, ch: end } },
+            };
+        }
+
+        // Case 2: cursor on a body character
+        if (isBodyChar(cur)) {
+            return this.wordRangeAt(cursor.line, lineText, i);
+        }
+
+        // Case 3: cursor just after a body character
+        if (i > 0 && isBodyChar(lineText.charAt(i - 1))) {
+            return this.wordRangeAt(cursor.line, lineText, i - 1);
+        }
+
+        return null;
+    }
+
+    private wordRangeAt(line: number, lineText: string, i: number): Candidate | null {
+        const isBodyChar = (ch: string) => /[\p{L}\p{N}_-]/u.test(ch);
+
+        let start = i;
+        while (start > 0 && isBodyChar(lineText.charAt(start - 1))) start--;
+
+        const hashStart = (start > 0 && lineText.charAt(start - 1) === "#") ? start - 1 : start;
+
+        let end = i + 1;
+        while (end < lineText.length && isBodyChar(lineText.charAt(end))) end++;
+
+        const raw = lineText.slice(hashStart, end);
+        if (!raw.trim()) return null;
+
+        return {
+            raw,
+            range: { from: { line, ch: hashStart }, to: { line, ch: end } },
+        };
+    }
+
+    // ── Validation ───────────────────────────────────────────────────────────────
+
+    private hasForbiddenChars(raw: string): boolean {
+        const s = raw.trim();
+        if (!s) return true;
+
+        const body = s.startsWith("#") ? s.slice(1) : s;
+        if (body.includes("#")) return true;
+
+        return /[!@$%^&*()+= <>,./?`~]/.test(body);
+    }
+
+    private normalizeCandidate(raw: string): string | null {
+        let t = raw.trim();
+        if (!t) return null;
+        if (this.hasForbiddenChars(t)) return null;
+
+        if (t.startsWith("#")) t = t.slice(1);
+        if (!t) return null;
+
+        if (/^\d+$/.test(t)) return null;
+        if (/\s/.test(t)) return null;
+
+        return t;
+    }
+
+    // ── Tag helpers ──────────────────────────────────────────────────────────────
+
+    private tagTokenForPlacement(candidate: string, mode: AltClickTagMode): string {
+        const text = (mode === "start-line" || mode === "end-line") ? candidate.toLowerCase() : candidate;
+        return `#${text}`;
+    }
+
+    private sortTags(tokens: string[]): string[] {
+        const uniq: string[] = [];
+        const seen = new Set<string>();
+        for (const t of tokens) {
+            const key = t.replace(/^#/, "").toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            uniq.push(t);
+        }
+        return uniq.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase(), "pl"));
+    }
+
+    // ── Line parsing ─────────────────────────────────────────────────────────────
+
+    private parseLeadingTags(lineText: string): { indent: string; tagBlock: string; tags: string[]; after: string } {
+        const indent = (lineText.match(/^\s*/) ?? [""])[0];
+        const rest = lineText.slice(indent.length);
+        const m = rest.match(/^((?:#[^\s#]+\s+)*)/);
+        const tagBlock = m?.[1] ?? "";
+        const tags = tagBlock.match(/#[^\s#]+/g) ?? [];
+        const after = rest.slice(tagBlock.length);
+        return { indent, tagBlock, tags, after };
+    }
+
+    private splitBlockIdSuffix(lineText: string): { core: string; blockId: string; trailingWs: string } {
+        const trailingWs = (lineText.match(/\s*$/) ?? [""])[0];
+        const noTrail = lineText.slice(0, lineText.length - trailingWs.length);
+
+        const m = noTrail.match(/(\s\^[\p{L}\p{N}_-]+)$/u);
+        if (!m) return { core: noTrail, blockId: "", trailingWs };
+
+        const blockWithSpace = m[1];
+        const core = noTrail.slice(0, noTrail.length - blockWithSpace.length);
+        const blockId = blockWithSpace.trim();
+
+        return { core, blockId, trailingWs };
+    }
+
+    private parseTrailingTags(coreText: string): { before: string; tags: string[] } {
+        const m = coreText.match(/(\s+(?:#[^\s#]+\s*)+)$/);
+        if (!m) return { before: coreText, tags: [] };
+
+        const tagBlock = m[1];
+        const tags = tagBlock.match(/#[^\s#]+/g) ?? [];
+        const before = coreText.slice(0, coreText.length - tagBlock.length);
+        return { before, tags };
+    }
+
+    private buildLineWithLeading(indent: string, tags: string[], after: string): string {
+        const afterClean = after.replace(/^\s+/, "");
+        const tagBlock = tags.join(" ");
+        const body = tagBlock ? (afterClean ? `${tagBlock} ${afterClean}` : tagBlock) : afterClean;
+        return `${indent}${body}`;
+    }
+
+    private buildLineWithTrailing(before: string, tags: string[], blockId: string, trailingWs: string): string {
+        const beforeClean = before.replace(/\s+$/, "");
+        const tagBlock = tags.join(" ");
+        const parts: string[] = [];
+        if (beforeClean) parts.push(beforeClean);
+        if (tagBlock) parts.push(tagBlock);
+        if (blockId) parts.push(blockId);
+        return `${parts.join(" ")}${trailingWs}`;
+    }
+
+    // ── Create / Remove ─────────────────────────────────────────────────────────
+
+    private async createTag(editor: Editor, mode: AltClickTagMode, candidate: Candidate) {
+        const normalized = this.normalizeCandidate(candidate.raw);
+        if (!normalized) return;
+
+        const tagToken = this.tagTokenForPlacement(normalized, mode);
+
+        if (mode === "in-place") {
+            if (candidate.range) editor.replaceRange(tagToken, candidate.range.from, candidate.range.to);
+            else editor.replaceSelection(tagToken);
+            return;
+        }
+
+        const line = editor.getCursor().line;
+        const lineText = editor.getLine(line);
+
+        if (mode === "start-line") {
+            const lead = this.parseLeadingTags(lineText);
+            const next = this.sortTags([...lead.tags, tagToken]);
+            const newLine = this.buildLineWithLeading(lead.indent, next, lead.after);
+            editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+            return;
+        }
+
+        // end-line: insert BEFORE the ^block-id suffix (if any)
+        const split = this.splitBlockIdSuffix(lineText);
+        const trail = this.parseTrailingTags(split.core);
+        const next = this.sortTags([...trail.tags, tagToken]);
+        const newLine = this.buildLineWithTrailing(trail.before, next, split.blockId, split.trailingWs);
+        editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+    }
+
+    private async removeTag(editor: Editor, candidate: Candidate) {
+        const normalized = this.normalizeCandidate(candidate.raw);
+        if (!normalized) return;
+
+        const key = normalized.toLowerCase();
+        const cursor = editor.getCursor();
+        const line = candidate.range?.from?.line ?? cursor.line;
+
+        if (candidate.range && (candidate.range.from.line !== line || candidate.range.to.line !== line)) return;
+
+        const lineText = editor.getLine(line);
+        const ch = candidate.range?.from?.ch ?? cursor.ch;
+
+        const lead = this.parseLeadingTags(lineText);
+        const split = this.splitBlockIdSuffix(lineText);
+        const trail = this.parseTrailingTags(split.core);
+
+        const leadStart = lead.indent.length;
+        const leadEnd = leadStart + lead.tagBlock.length;
+        const trailStart = trail.before.length;
+        const trailEnd = split.core.length;
+
+        const inLeading = ch >= leadStart && ch < leadEnd;
+        const inTrailing = ch >= trailStart && ch < trailEnd;
+
+        const leadHas = lead.tags.some(t => t.replace(/^#/, "").toLowerCase() === key);
+        const trailHas = trail.tags.some(t => t.replace(/^#/, "").toLowerCase() === key);
+
+        if (leadHas && (inLeading || !trailHas)) {
+            const kept = lead.tags.filter(t => t.replace(/^#/, "").toLowerCase() !== key);
+            const newLine = this.buildLineWithLeading(lead.indent, kept, lead.after);
+            editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+            return;
+        }
+
+        if (trailHas && (inTrailing || !leadHas)) {
+            const kept = trail.tags.filter(t => t.replace(/^#/, "").toLowerCase() !== key);
+            const newLine = this.buildLineWithTrailing(trail.before, kept, split.blockId, split.trailingWs);
+            editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+            return;
+        }
+
+        // Inline tag: just strip the '#' prefix in place.
+        if (candidate.range) {
+            const selected = editor.getRange(candidate.range.from, candidate.range.to);
+            if (selected && selected.startsWith("#")) {
+                editor.replaceRange(selected.slice(1), candidate.range.from, candidate.range.to);
+            }
+        }
+    }
+
+    // ── Settings ────────────────────────────────────────────────────────────────
+
+    async loadSettings() {
+        const loaded = (await this.loadData()) ?? {};
+        const anyLoaded = loaded as Partial<FlatTagPluginSettings> & Record<string, unknown>;
+
+        const mode = anyLoaded.altClickTagMode;
+
+        this.settings = {
+            pinnedTags: Array.isArray(anyLoaded.pinnedTags)
+                ? (anyLoaded.pinnedTags as unknown[]).filter((t): t is string => typeof t === "string")
+                : DEFAULT_SETTINGS.pinnedTags,
+
+            frequencyCutoff: (typeof anyLoaded.frequencyCutoff === "number" && !isNaN(anyLoaded.frequencyCutoff))
+                ? Math.max(0, Math.floor(anyLoaded.frequencyCutoff))
+                : DEFAULT_SETTINGS.frequencyCutoff,
+
+            frequencyCutoffEnabled: typeof anyLoaded.frequencyCutoffEnabled === "boolean"
+                ? anyLoaded.frequencyCutoffEnabled
+                : DEFAULT_SETTINGS.frequencyCutoffEnabled,
+
+            altClickTagMode: (mode === "start-line" || mode === "in-place" || mode === "end-line")
+                ? mode
+                : DEFAULT_SETTINGS.altClickTagMode,
+
+            mobileLongPressEnabled: typeof anyLoaded.mobileLongPressEnabled === "boolean"
+                ? anyLoaded.mobileLongPressEnabled
+                : DEFAULT_SETTINGS.mobileLongPressEnabled,
+
+            mobileLongPressMs: (typeof anyLoaded.mobileLongPressMs === "number" && !isNaN(anyLoaded.mobileLongPressMs))
+                ? Math.max(250, Math.min(5000, Math.floor(anyLoaded.mobileLongPressMs)))
+                : DEFAULT_SETTINGS.mobileLongPressMs,
+
+            // NEW: persisted status-bar toggle
+            showPlacementInStatusBar: typeof (anyLoaded as any).showPlacementInStatusBar === "boolean"
+                ? ((anyLoaded as any).showPlacementInStatusBar as boolean)
+                : (DEFAULT_SETTINGS as any).showPlacementInStatusBar,
+        } as FlatTagPluginSettings;
+
+        // Persist immediately to drop stale keys and backfill new defaults
+        await this.saveData(this.settings);
+    }
+
+    async saveSettings() {
+        await this.saveData(this.settings);
+        this.app.workspace.trigger("flat-tag-view:settings-updated");
+        this.updateStatusBar();
+    }
+
+    // ── View activation / style ────────────────────────────────────────────────
+
+    async activateView() {
+        const workspace = this.app.workspace;
+        let leaf = workspace.getLeavesOfType(VIEW_TYPE)[0];
+
+        if (!leaf) {
+            const rightLeaf = workspace.getRightLeaf(false);
+            if (!rightLeaf) return;
+            leaf = rightLeaf;
+            await leaf.setViewState({ type: VIEW_TYPE });
+        }
+
+        workspace.revealLeaf(leaf);
+    }
+
+    private addStyle() {
+        const styleEl = document.createElement("style");
+        styleEl.innerHTML = getStyles();
+        document.head.appendChild(styleEl);
+    }
 }

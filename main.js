@@ -28,23 +28,21 @@ __export(main_exports, {
 module.exports = __toCommonJS(main_exports);
 var import_obsidian3 = require("obsidian");
 
-// flatTagView.ts
-var import_obsidian = require("obsidian");
-
 // constants.ts
 var VIEW_TYPE = "flat-tag-view";
 
 // flatTagView.ts
+var import_obsidian = require("obsidian");
 var FlatTagView = class extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.selectedTags = /* @__PURE__ */ new Set();
     this.excludedTags = /* @__PURE__ */ new Set();
     this.allTags = /* @__PURE__ */ new Map();
-    this.currentSort = "az";
     this.tagsByFile = /* @__PURE__ */ new Map();
-    this.tagSearchText = "";
+    this.currentSort = "az";
     this.searchMode = "note";
+    this.tagSearchText = "";
     this.touchTimer = null;
     this.lastInteractionWasTouch = false;
     this.plugin = plugin;
@@ -76,9 +74,7 @@ var FlatTagView = class extends import_obsidian.ItemView {
     (0, import_obsidian.setIcon)(this.sortCountBtn, "lucide-bar-chart-2");
     const clearButton = buttonSection.createDiv({ cls: "flat-tag-clear-button", title: "Clear tag selections" });
     (0, import_obsidian.setIcon)(clearButton, "x");
-    clearButton.addEventListener("click", () => {
-      this.clearTagSelections();
-    });
+    clearButton.addEventListener("click", () => this.clearTagSelections());
     this.scopeBtn = buttonSection.createDiv({
       cls: "flat-tag-mode-button",
       text: "NOTE",
@@ -88,6 +84,28 @@ var FlatTagView = class extends import_obsidian.ItemView {
       cls: "flat-tag-mode-button",
       text: "TASK-ALL",
       title: "Click to cycle: All -> Todo -> Done"
+    });
+    const cutoffSpacer = buttonSection.createDiv({ cls: "flat-tag-cutoff-spacer" });
+    cutoffSpacer.ariaHidden = "true";
+    const cutoffSection = buttonSection.createDiv({ cls: "flat-tag-cutoff-section" });
+    this.cutoffToggleBtn = cutoffSection.createDiv({ cls: "flat-tag-cutoff-toggle", title: "Toggle frequency cutoff" });
+    this.cutoffInput = cutoffSection.createEl("input", {
+      cls: "flat-tag-cutoff-input",
+      attr: { type: "number", min: "0", step: "1", inputmode: "numeric", placeholder: "0" }
+    });
+    this.cutoffToggleBtn.addEventListener("click", async () => {
+      this.plugin.settings.frequencyCutoffEnabled = !this.plugin.settings.frequencyCutoffEnabled;
+      await this.plugin.saveSettings();
+      this.syncCutoffControlsFromSettings();
+      this.renderTags();
+    });
+    this.cutoffInput.addEventListener("input", async () => {
+      const parsed = parseInt(this.cutoffInput.value, 10);
+      if (!isNaN(parsed) && parsed >= 0) {
+        this.plugin.settings.frequencyCutoff = parsed;
+        await this.plugin.saveSettings();
+        this.renderTags();
+      }
     });
     this.sortAzBtn.addEventListener("click", () => {
       this.currentSort = "az";
@@ -99,7 +117,6 @@ var FlatTagView = class extends import_obsidian.ItemView {
     });
     this.scopeBtn.addEventListener("click", () => this.toggleScopeMode());
     this.taskBtn.addEventListener("click", () => this.toggleTaskMode());
-    this.updateModeUI(true);
     const searchSection = this.sortContainer.createDiv({ cls: "flat-tag-search-section" });
     const searchBox = searchSection.createEl("input", {
       cls: "flat-tag-search-input",
@@ -107,15 +124,16 @@ var FlatTagView = class extends import_obsidian.ItemView {
     });
     const clearSearchButton = searchSection.createDiv({ cls: "flat-tag-search-clear-button", title: "Clear search" });
     (0, import_obsidian.setIcon)(clearSearchButton, "square-x");
-    clearSearchButton.addEventListener("click", () => {
-      this.clearSearchBox();
-    });
+    clearSearchButton.addEventListener("click", () => this.clearSearchBox());
     searchBox.addEventListener("input", (e) => {
+      var _a;
       const target = e.target;
-      this.tagSearchText = target.value;
+      this.tagSearchText = (_a = target.value) != null ? _a : "";
       this.renderTags();
     });
     this.tagContainer = this.container.createDiv({ cls: "flat-tag-list" });
+    this.syncCutoffControlsFromSettings();
+    this.updateModeUI(true);
     await this.loadTags();
     this.registerEvent(this.app.metadataCache.on("changed", (file) => {
       this.updateFileTags(file);
@@ -136,8 +154,12 @@ var FlatTagView = class extends import_obsidian.ItemView {
       }
     }));
     this.registerEvent(this.app.workspace.on("flat-tag-view:settings-updated", () => {
+      this.syncCutoffControlsFromSettings();
       this.renderTags();
     }));
+  }
+  async onClose() {
+    this.contentEl.empty();
   }
   async loadTags() {
     this.allTags.clear();
@@ -146,9 +168,7 @@ var FlatTagView = class extends import_obsidian.ItemView {
     for (const file of files) {
       const fileTags = this.getFileTags(file);
       this.tagsByFile.set(file.path, fileTags);
-      fileTags.forEach((tag) => {
-        this.allTags.set(tag, (this.allTags.get(tag) || 0) + 1);
-      });
+      fileTags.forEach((tag) => this.allTags.set(tag, (this.allTags.get(tag) || 0) + 1));
     }
     this.renderTags();
   }
@@ -157,20 +177,18 @@ var FlatTagView = class extends import_obsidian.ItemView {
     const newTagsArr = this.getFileTags(file);
     const oldSorted = [...oldTagsArr].sort().join(",");
     const newSorted = [...newTagsArr].sort().join(",");
-    if (oldSorted !== newSorted) {
-      oldTagsArr.forEach((tag) => {
-        const count = (this.allTags.get(tag) || 0) - 1;
-        if (count <= 0)
-          this.allTags.delete(tag);
-        else
-          this.allTags.set(tag, count);
-      });
-      newTagsArr.forEach((tag) => {
-        this.allTags.set(tag, (this.allTags.get(tag) || 0) + 1);
-      });
-      this.tagsByFile.set(file.path, newTagsArr);
-      this.renderTags();
-    }
+    if (oldSorted === newSorted)
+      return;
+    oldTagsArr.forEach((tag) => {
+      const count = (this.allTags.get(tag) || 0) - 1;
+      if (count <= 0)
+        this.allTags.delete(tag);
+      else
+        this.allTags.set(tag, count);
+    });
+    newTagsArr.forEach((tag) => this.allTags.set(tag, (this.allTags.get(tag) || 0) + 1));
+    this.tagsByFile.set(file.path, newTagsArr);
+    this.renderTags();
   }
   removeFileTags(filePath) {
     const oldTags = this.tagsByFile.get(filePath);
@@ -188,84 +206,57 @@ var FlatTagView = class extends import_obsidian.ItemView {
   async renderTags() {
     var _a;
     this.tagContainer.empty();
-    if (this.sortContainer) {
-      const sortAzBtn = this.sortContainer.querySelector('.flat-tag-sort-button[title="Sort A-Z"]');
-      const sortCountBtn = this.sortContainer.querySelector('.flat-tag-sort-button[title="Sort by usage"]');
-      if (sortAzBtn && sortCountBtn) {
-        sortAzBtn.removeClass("is-active");
-        sortCountBtn.removeClass("is-active");
-        if (this.currentSort === "az")
-          sortAzBtn.addClass("is-active");
-        else
-          sortCountBtn.addClass("is-active");
-      }
-    }
+    this.sortAzBtn.toggleClass("is-active", this.currentSort === "az");
+    this.sortCountBtn.toggleClass("is-active", this.currentSort === "count");
     const filteredTags = await this.getFilteredTagsAsync();
-    const pinnedTags = /* @__PURE__ */ new Map();
-    const normalTags = /* @__PURE__ */ new Map();
-    const safePinnedList = ((_a = this.plugin.settings) == null ? void 0 : _a.pinnedTags) || [];
-    const pinnedSet = new Set(safePinnedList);
+    const pinned = /* @__PURE__ */ new Map();
+    const normal = /* @__PURE__ */ new Map();
+    const pinnedSet = new Set((_a = this.plugin.settings.pinnedTags) != null ? _a : []);
     filteredTags.forEach((count, tag) => {
       if (pinnedSet.has(tag))
-        pinnedTags.set(tag, count);
+        pinned.set(tag, count);
       else
-        normalTags.set(tag, count);
+        normal.set(tag, count);
     });
-    if (pinnedTags.size > 0) {
+    if (pinned.size > 0) {
       const pinContainer = this.tagContainer.createDiv({ cls: "flat-tag-pinned-section" });
       const pinnedIcon = pinContainer.createSpan({ cls: "flat-tag-letter" });
       (0, import_obsidian.setIcon)(pinnedIcon, "pin");
-      const pinnedSorted = Array.from(pinnedTags.entries()).sort((a, b) => a[0].localeCompare(b[0], "pl"));
-      pinnedSorted.forEach(([tag, count]) => {
-        this.createTagElement(tag, count, pinContainer);
-      });
+      Array.from(pinned.entries()).sort((a, b) => a[0].localeCompare(b[0], "pl")).forEach(([tag, count]) => this.createTagElement(tag, count, pinContainer));
       this.tagContainer.createDiv({ cls: "flat-tag-separator" });
     }
-    let sortedTags;
+    let sortedTags = Array.from(normal.entries());
     if (this.currentSort === "az") {
-      sortedTags = Array.from(normalTags.entries()).sort((a, b) => a[0].localeCompare(b[0], "pl"));
+      sortedTags.sort((a, b) => a[0].localeCompare(b[0], "pl"));
+      const polishDiacritics = ["\u0104", "\u0106", "\u0118", "\u0141", "\u0143", "\xD3", "\u015A", "\u0179", "\u017B"];
+      const buckets = /* @__PURE__ */ new Map();
+      for (let c = 65; c <= 90; c++)
+        buckets.set(String.fromCharCode(c), []);
+      polishDiacritics.forEach((l) => buckets.set(l, []));
+      buckets.set("OTHER", []);
+      for (const item of sortedTags) {
+        const first = (item[0].charAt(0) || "").toUpperCase();
+        if (buckets.has(first))
+          buckets.get(first).push(item);
+        else
+          buckets.get("OTHER").push(item);
+      }
+      for (const [letter, items] of buckets.entries()) {
+        if (items.length === 0)
+          continue;
+        if (letter !== "OTHER") {
+          const letterEl = this.tagContainer.createSpan({ cls: "flat-tag-letter" });
+          letterEl.setText(letter);
+        }
+        items.forEach(([tag, count]) => this.createTagElement(tag, count, this.tagContainer));
+      }
     } else {
-      sortedTags = Array.from(normalTags.entries()).sort((a, b) => {
+      sortedTags.sort((a, b) => {
         if (b[1] !== a[1])
           return b[1] - a[1];
         return a[0].localeCompare(b[0], "pl");
       });
-    }
-    if (this.currentSort === "az") {
-      const tagsByLetter = /* @__PURE__ */ new Map();
-      tagsByLetter.set("other", []);
-      for (let charCode = 65; charCode <= 90; charCode++) {
-        tagsByLetter.set(String.fromCharCode(charCode), []);
-      }
-      const polishDiacritics = ["\u0104", "\u0106", "\u0118", "\u0141", "\u0143", "\xD3", "\u015A", "\u0179", "\u017B"];
-      polishDiacritics.forEach((letter) => tagsByLetter.set(letter, []));
-      sortedTags.forEach((tagItem) => {
-        var _a2, _b, _c;
-        const [tag] = tagItem;
-        const firstChar = tag.charAt(0).toUpperCase();
-        if (firstChar.match(/[A-Z]/)) {
-          (_a2 = tagsByLetter.get(firstChar)) == null ? void 0 : _a2.push(tagItem);
-        } else if (polishDiacritics.includes(firstChar)) {
-          (_b = tagsByLetter.get(firstChar)) == null ? void 0 : _b.push(tagItem);
-        } else {
-          (_c = tagsByLetter.get("other")) == null ? void 0 : _c.push(tagItem);
-        }
-      });
-      tagsByLetter.forEach((letterTags, letter) => {
-        if (letterTags.length > 0) {
-          if (letter !== "other") {
-            const letterEl = this.tagContainer.createSpan({ cls: "flat-tag-letter" });
-            letterEl.setText(letter);
-          }
-          letterTags.forEach(([tag, count]) => {
-            this.createTagElement(tag, count, this.tagContainer);
-          });
-        }
-      });
-    } else {
-      sortedTags.forEach(([tag, count]) => {
-        this.createTagElement(tag, count, this.tagContainer);
-      });
+      sortedTags.forEach(([tag, count]) => this.createTagElement(tag, count, this.tagContainer));
     }
   }
   createTagElement(tag, count, parentEl) {
@@ -275,83 +266,99 @@ var FlatTagView = class extends import_obsidian.ItemView {
       tagEl.addClass("flat-tag-selected");
     else if (this.excludedTags.has(tag))
       tagEl.addClass("flat-tag-excluded");
-    const safePinned = ((_a = this.plugin.settings) == null ? void 0 : _a.pinnedTags) || [];
-    if (safePinned.includes(tag))
+    if (((_a = this.plugin.settings.pinnedTags) != null ? _a : []).includes(tag))
       tagEl.addClass("flat-tag-pinned");
     tagEl.setText(`#${tag} (${count})`);
     tagEl.style.userSelect = "none";
     tagEl.style.webkitUserSelect = "none";
     const handleTagInteraction = async (isMultiSelect, isExclude, isPin) => {
+      var _a2;
       if (isPin) {
-        if (!this.plugin.settings)
-          return;
-        if (!this.plugin.settings.pinnedTags)
-          this.plugin.settings.pinnedTags = [];
-        if (this.plugin.settings.pinnedTags.includes(tag)) {
-          this.plugin.settings.pinnedTags = this.plugin.settings.pinnedTags.filter((t) => t !== tag);
-        } else {
-          this.plugin.settings.pinnedTags.push(tag);
-        }
+        const list = (_a2 = this.plugin.settings.pinnedTags) != null ? _a2 : [];
+        this.plugin.settings.pinnedTags = list.includes(tag) ? list.filter((t) => t !== tag) : [...list, tag];
         await this.plugin.saveSettings();
+        this.renderTags();
         return;
       }
       if (isExclude) {
-        if (this.excludedTags.has(tag)) {
+        if (this.excludedTags.has(tag))
           this.excludedTags.delete(tag);
-        } else {
+        else {
           this.excludedTags.add(tag);
           this.selectedTags.delete(tag);
         }
       } else if (isMultiSelect) {
-        if (this.selectedTags.has(tag)) {
+        if (this.selectedTags.has(tag))
           this.selectedTags.delete(tag);
-        } else {
+        else {
           this.selectedTags.add(tag);
           this.excludedTags.delete(tag);
         }
       } else {
-        if (this.selectedTags.size === 1 && this.selectedTags.has(tag)) {
+        if (this.selectedTags.size === 1 && this.selectedTags.has(tag))
           this.selectedTags.clear();
-        } else {
+        else {
           this.selectedTags.clear();
           this.excludedTags.clear();
           this.selectedTags.add(tag);
         }
       }
+      if (this.selectedTags.has(tag)) {
+        tagEl.addClass("flat-tag-selected");
+        tagEl.removeClass("flat-tag-excluded");
+      } else if (this.excludedTags.has(tag)) {
+        tagEl.addClass("flat-tag-excluded");
+        tagEl.removeClass("flat-tag-selected");
+      } else {
+        tagEl.removeClass("flat-tag-selected");
+        tagEl.removeClass("flat-tag-excluded");
+      }
       this.renderTags();
       void this.updateSearch();
     };
-    tagEl.addEventListener("click", (e) => {
-      e.preventDefault();
-      handleTagInteraction(e.ctrlKey || e.metaKey, e.shiftKey, e.altKey);
-    });
+    let touchHandled = false;
     let touchStartX = 0;
     let touchStartY = 0;
     let isSwiping = false;
+    let longPressTriggered = false;
+    tagEl.addEventListener("click", (e) => {
+      if (touchHandled) {
+        touchHandled = false;
+        return;
+      }
+      e.preventDefault();
+      void handleTagInteraction(!!(e.ctrlKey || e.metaKey), !!e.shiftKey, !!e.altKey);
+    });
     tagEl.addEventListener("touchstart", (e) => {
       const touch = e.touches[0];
       touchStartX = touch.clientX;
       touchStartY = touch.clientY;
       isSwiping = false;
+      longPressTriggered = false;
+      touchHandled = false;
+      if (this.touchTimer)
+        window.clearTimeout(this.touchTimer);
       this.touchTimer = window.setTimeout(() => {
         this.touchTimer = null;
         if (!isSwiping) {
-          handleTagInteraction(true, false, false);
+          longPressTriggered = true;
+          touchHandled = true;
+          void handleTagInteraction(true, false, false);
         }
       }, 500);
     }, { passive: true });
     tagEl.addEventListener("touchmove", (e) => {
       const touch = e.touches[0];
-      const deltaX = touch.clientX - touchStartX;
-      const deltaY = touch.clientY - touchStartY;
+      const dx = touch.clientX - touchStartX;
+      const dy = touch.clientY - touchStartY;
       if (!isSwiping) {
-        if (Math.abs(deltaX) > 10 && Math.abs(deltaX) > Math.abs(deltaY)) {
+        if (Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
           if (this.touchTimer) {
             window.clearTimeout(this.touchTimer);
             this.touchTimer = null;
           }
           isSwiping = true;
-        } else if (Math.abs(deltaY) > 10) {
+        } else if (Math.abs(dy) > 10) {
           if (this.touchTimer) {
             window.clearTimeout(this.touchTimer);
             this.touchTimer = null;
@@ -359,16 +366,16 @@ var FlatTagView = class extends import_obsidian.ItemView {
           return;
         }
       }
-      if (isSwiping && deltaX < 0) {
+      if (isSwiping && dx < 0) {
         e.preventDefault();
-        const capped = Math.max(deltaX, -90);
+        const capped = Math.max(dx, -90);
         tagEl.style.transform = `translateX(${capped}px)`;
         tagEl.style.opacity = String(0.5 + Math.abs(capped) / 90 * 0.5);
       }
     }, { passive: false });
     tagEl.addEventListener("touchend", (e) => {
       const touch = e.changedTouches[0];
-      const deltaX = touch.clientX - touchStartX;
+      const dx = touch.clientX - touchStartX;
       tagEl.style.transition = "transform 0.2s ease, opacity 0.2s ease";
       tagEl.style.transform = "";
       tagEl.style.opacity = "";
@@ -377,18 +384,26 @@ var FlatTagView = class extends import_obsidian.ItemView {
       }, 220);
       if (isSwiping) {
         isSwiping = false;
-        if (deltaX <= -60)
-          handleTagInteraction(false, false, true);
+        touchHandled = true;
+        if (dx <= -60)
+          void handleTagInteraction(false, false, true);
+        return;
+      }
+      if (longPressTriggered) {
+        longPressTriggered = false;
         return;
       }
       if (this.touchTimer) {
         window.clearTimeout(this.touchTimer);
         this.touchTimer = null;
-        handleTagInteraction(false, false, false);
+        touchHandled = true;
+        void handleTagInteraction(false, false, false);
       }
     }, { passive: true });
     tagEl.addEventListener("touchcancel", () => {
       isSwiping = false;
+      longPressTriggered = false;
+      touchHandled = false;
       if (this.touchTimer) {
         window.clearTimeout(this.touchTimer);
         this.touchTimer = null;
@@ -402,94 +417,86 @@ var FlatTagView = class extends import_obsidian.ItemView {
     }, { passive: true });
   }
   async getFilteredTagsAsync() {
-    var _a, _b;
-    let filteredTags = /* @__PURE__ */ new Map();
+    var _a, _b, _c;
+    let filtered = /* @__PURE__ */ new Map();
     if (this.selectedTags.size === 0) {
-      filteredTags = new Map(this.allTags);
+      filtered = new Map(this.allTags);
     } else {
-      const selectedTagsArray = Array.from(this.selectedTags);
+      const selectedArr = Array.from(this.selectedTags);
       const matchingFiles = [];
       this.tagsByFile.forEach((tagsArr, filePath) => {
-        if (selectedTagsArray.every((tag) => tagsArr.includes(tag))) {
+        if (selectedArr.every((t) => tagsArr.includes(t)))
           matchingFiles.push(filePath);
-        }
       });
       if (this.searchMode === "note") {
-        matchingFiles.forEach((filePath) => {
-          const fileTags = this.tagsByFile.get(filePath);
-          if (fileTags) {
-            fileTags.forEach((tag) => {
-              filteredTags.set(tag, (filteredTags.get(tag) || 0) + 1);
-            });
-          }
-        });
+        for (const filePath of matchingFiles) {
+          const tags = this.tagsByFile.get(filePath);
+          if (!tags)
+            continue;
+          for (const t of tags)
+            filtered.set(t, (filtered.get(t) || 0) + 1);
+        }
       } else {
         for (const filePath of matchingFiles) {
           const file = this.app.vault.getAbstractFileByPath(filePath);
-          if (file instanceof import_obsidian.TFile) {
-            const content = await this.app.vault.cachedRead(file);
-            const lines = content.split("\n");
-            for (const line of lines) {
-              const lowerLine = line.toLowerCase();
-              if (this.searchMode === "task" && !lowerLine.includes("- ["))
-                continue;
-              if (this.searchMode === "task-todo" && !lowerLine.includes("- [ ]"))
-                continue;
-              if (this.searchMode === "task-done" && !lowerLine.includes("- [x]"))
-                continue;
-              const lineTags = /* @__PURE__ */ new Set();
-              const tagRegex = /#([^\s#]+)/g;
-              let match;
-              while ((match = tagRegex.exec(line)) !== null) {
-                lineTags.add(match[1]);
-              }
-              if (selectedTagsArray.every((selectedTag) => {
-                return Array.from(lineTags).some((t) => t.toLowerCase() === selectedTag.toLowerCase());
-              })) {
-                lineTags.forEach((tag) => {
-                  filteredTags.set(tag, (filteredTags.get(tag) || 0) + 1);
-                });
-              }
-            }
+          if (!(file instanceof import_obsidian.TFile))
+            continue;
+          const content = await this.app.vault.cachedRead(file);
+          const lines = content.split(/\r?\n/);
+          for (const line of lines) {
+            const lower = line.toLowerCase();
+            if (this.searchMode === "task" && !lower.includes("- ["))
+              continue;
+            if (this.searchMode === "task-todo" && !lower.includes("- [ ]"))
+              continue;
+            if (this.searchMode === "task-done" && !lower.includes("- [x"))
+              continue;
+            const lineTags = /* @__PURE__ */ new Set();
+            const tagRegex = /#([^\s#]+)/g;
+            let m;
+            while ((m = tagRegex.exec(lower)) !== null)
+              lineTags.add(m[1]);
+            const hasAll = selectedArr.every(
+              (sel) => Array.from(lineTags).some((t) => t.toLowerCase() === sel.toLowerCase())
+            );
+            if (!hasAll)
+              continue;
+            for (const t of lineTags)
+              filtered.set(t, (filtered.get(t) || 0) + 1);
           }
         }
       }
-      selectedTagsArray.forEach((tag) => {
-        if (!filteredTags.has(tag)) {
-          filteredTags.set(tag, this.allTags.get(tag) || 0);
-        }
-      });
     }
-    Array.from(this.excludedTags).forEach((tag) => {
-      if (!filteredTags.has(tag)) {
-        filteredTags.set(tag, this.allTags.get(tag) || 0);
-      }
-    });
-    const cutoff = ((_a = this.plugin.settings) == null ? void 0 : _a.frequencyCutoff) || 0;
-    const safePinned = ((_b = this.plugin.settings) == null ? void 0 : _b.pinnedTags) || [];
+    for (const t of this.selectedTags)
+      if (!filtered.has(t))
+        filtered.set(t, this.allTags.get(t) || 0);
+    for (const t of this.excludedTags)
+      if (!filtered.has(t))
+        filtered.set(t, this.allTags.get(t) || 0);
+    const cutoffEnabled = (_a = this.plugin.settings.frequencyCutoffEnabled) != null ? _a : false;
+    const cutoff = cutoffEnabled ? (_b = this.plugin.settings.frequencyCutoff) != null ? _b : 0 : 0;
+    const pinned = new Set((_c = this.plugin.settings.pinnedTags) != null ? _c : []);
     if (cutoff > 0) {
-      const result = /* @__PURE__ */ new Map();
-      filteredTags.forEach((count, tag) => {
-        if (count >= cutoff || this.selectedTags.has(tag) || safePinned.includes(tag)) {
-          result.set(tag, count);
-        }
+      const next = /* @__PURE__ */ new Map();
+      filtered.forEach((count, tag) => {
+        if (count >= cutoff || this.selectedTags.has(tag) || pinned.has(tag))
+          next.set(tag, count);
       });
-      filteredTags = result;
+      filtered = next;
     }
     if (this.tagSearchText) {
-      const searchText = this.tagSearchText.toLowerCase();
-      const result = /* @__PURE__ */ new Map();
-      filteredTags.forEach((count, tag) => {
-        if (tag.toLowerCase().includes(searchText) || this.selectedTags.has(tag) || this.excludedTags.has(tag)) {
-          result.set(tag, count);
-        }
+      const q = this.tagSearchText.toLowerCase();
+      const next = /* @__PURE__ */ new Map();
+      filtered.forEach((count, tag) => {
+        if (tag.toLowerCase().includes(q) || this.selectedTags.has(tag) || this.excludedTags.has(tag))
+          next.set(tag, count);
       });
-      return result;
+      filtered = next;
     }
-    return filteredTags;
+    return filtered;
   }
   async updateSearch(options) {
-    var _a, _b;
+    var _a, _b, _c;
     const workspace = this.app.workspace;
     const prevLeaf = workspace.activeLeaf;
     const isTouchContext = import_obsidian.Platform.isMobile || this.lastInteractionWasTouch;
@@ -503,88 +510,73 @@ var FlatTagView = class extends import_obsidian.ItemView {
         await searchLeaf.setViewState({ type: "search", active: false });
       }
     }
-    if (searchLeaf && revealSearch) {
+    if (searchLeaf && revealSearch)
       workspace.revealLeaf(searchLeaf);
-    }
-    if (prevLeaf) {
+    if (prevLeaf)
       workspace.setActiveLeaf(prevLeaf, { focus: true });
-    }
     this.lastInteractionWasTouch = false;
     if (!searchLeaf)
       return;
-    if (this.selectedTags.size === 0 && this.excludedTags.size === 0) {
-      const searchView2 = searchLeaf.view;
-      if (searchView2) {
-        const clearBtn = searchView2.containerEl.querySelector(".search-input-clear-button");
-        if (clearBtn) {
-          clearBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: false }));
-        } else if (typeof searchView2.setQuery === "function") {
-          searchView2.setQuery("");
-        }
-      }
-      return;
-    }
-    let tagQuery = "";
     const selected = Array.from(this.selectedTags);
     const excluded = Array.from(this.excludedTags);
+    const searchView = searchLeaf.view;
+    if (selected.length === 0 && excluded.length === 0) {
+      const clearBtn = (_c = searchView == null ? void 0 : searchView.containerEl) == null ? void 0 : _c.querySelector(".search-input-clear-button");
+      if (clearBtn)
+        clearBtn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: false }));
+      else if (typeof (searchView == null ? void 0 : searchView.setQuery) === "function")
+        searchView.setQuery("");
+      return;
+    }
+    let query = "";
     if (this.searchMode === "note") {
-      tagQuery = [
-        ...selected.map((tag) => `tag:#${tag}`),
-        ...excluded.map((tag) => `-tag:#${tag}`)
+      query = [
+        ...selected.map((t) => `tag:#${t}`),
+        ...excluded.map((t) => `-tag:#${t}`)
       ].join(" ");
     } else {
-      let prefix = "line:(";
-      if (this.searchMode === "task")
-        prefix = "task:(";
-      else if (this.searchMode === "task-todo")
-        prefix = "task-todo:(";
-      else if (this.searchMode === "task-done")
-        prefix = "task-done:(";
-      const blockContents = [
-        ...selected.map((tag) => `#${tag}`),
-        ...excluded.map((tag) => `-#${tag}`)
+      const prefix = this.searchMode === "line" ? "line:(" : this.searchMode === "task" ? "task:(" : this.searchMode === "task-todo" ? "task-todo:(" : "task-done:(";
+      const body = [
+        ...selected.map((t) => `#${t}`),
+        ...excluded.map((t) => `-#${t}`)
       ].join(" ");
-      tagQuery = `${prefix} ${blockContents} )`;
+      query = `${prefix}${body})`;
     }
-    const searchView = searchLeaf.view;
-    if (searchView && typeof searchView.setQuery === "function") {
-      searchView.setQuery(tagQuery);
-    }
+    if (typeof (searchView == null ? void 0 : searchView.setQuery) === "function")
+      searchView.setQuery(query);
   }
   getFileTags(file) {
+    var _a;
     const cache = this.app.metadataCache.getFileCache(file);
     if (!cache)
       return [];
     const tags = [];
-    if (cache.tags) {
-      cache.tags.forEach((tagObj) => {
-        tags.push(tagObj.tag.replace(/^#/, ""));
+    if (cache.tags)
+      cache.tags.forEach((t) => tags.push(t.tag.replace(/^#/, "")));
+    const fm = (_a = cache.frontmatter) == null ? void 0 : _a.tags;
+    if (typeof fm === "string") {
+      fm.split(",").map((s) => s.trim()).filter(Boolean).forEach((t) => tags.push(t.replace(/^#/, "")));
+    } else if (Array.isArray(fm)) {
+      fm.forEach((t) => {
+        if (t)
+          tags.push(String(t).replace(/^#/, ""));
       });
     }
-    if (cache.frontmatter && cache.frontmatter.tags) {
-      const fmTags = cache.frontmatter.tags;
-      if (typeof fmTags === "string") {
-        fmTags.split(/[\s,]+/).filter(Boolean).forEach((tag) => {
-          tags.push(tag);
-        });
-      } else if (Array.isArray(fmTags)) {
-        fmTags.forEach((tag) => {
-          if (tag)
-            tags.push(String(tag));
-        });
-      }
-    }
-    return tags;
+    return Array.from(new Set(tags));
+  }
+  syncCutoffControlsFromSettings() {
+    var _a, _b;
+    const enabled = (_a = this.plugin.settings.frequencyCutoffEnabled) != null ? _a : false;
+    const cutoff = (_b = this.plugin.settings.frequencyCutoff) != null ? _b : 0;
+    this.cutoffInput.value = String(cutoff);
+    this.cutoffInput.disabled = !enabled;
+    this.cutoffToggleBtn.toggleClass("is-enabled", enabled);
+    this.cutoffToggleBtn.toggleClass("is-disabled", !enabled);
+    (0, import_obsidian.setIcon)(this.cutoffToggleBtn, enabled ? "eye" : "eye-off");
   }
   updateModeUI(skipSearch = false) {
-    if (!this.sortAzBtn || !this.sortCountBtn || !this.scopeBtn || !this.taskBtn)
-      return;
-    this.sortAzBtn.removeClass("is-active");
-    this.sortCountBtn.removeClass("is-active");
-    if (this.currentSort === "az")
-      this.sortAzBtn.addClass("is-active");
-    if (this.currentSort === "count")
-      this.sortCountBtn.addClass("is-active");
+    this.sortAzBtn.toggleClass("is-active", this.currentSort === "az");
+    this.sortCountBtn.toggleClass("is-active", this.currentSort === "count");
     this.scopeBtn.removeClass("is-active");
     this.taskBtn.removeClass("is-active");
     if (this.searchMode === "note") {
@@ -604,49 +596,33 @@ var FlatTagView = class extends import_obsidian.ItemView {
       this.taskBtn.addClass("is-active");
     }
     if (["note", "line"].includes(this.searchMode)) {
-      if (!["TASK-ALL", "TASK-TODO", "TASK-DONE"].includes(this.taskBtn.innerText)) {
+      if (!["TASK-ALL", "TASK-TODO", "TASK-DONE"].includes(this.taskBtn.innerText))
         this.taskBtn.setText("TASK-ALL");
-      }
     } else {
-      if (!["NOTE", "LINE"].includes(this.scopeBtn.innerText)) {
+      if (!["NOTE", "LINE"].includes(this.scopeBtn.innerText))
         this.scopeBtn.setText("NOTE");
-      }
     }
-    if (!skipSearch) {
+    if (!skipSearch)
       void this.updateSearch();
-    }
-    if (this.tagContainer) {
+    if (this.tagContainer)
       this.renderTags();
-    }
   }
   toggleScopeMode() {
-    if (!this.scopeBtn)
-      return;
-    if (["note", "line"].includes(this.searchMode)) {
+    if (["note", "line"].includes(this.searchMode))
       this.searchMode = this.searchMode === "note" ? "line" : "note";
-    } else {
+    else
       this.searchMode = this.scopeBtn.innerText === "LINE" ? "line" : "note";
-    }
     this.updateModeUI();
   }
   toggleTaskMode() {
-    if (!this.taskBtn)
-      return;
-    if (["task", "task-todo", "task-done"].includes(this.searchMode)) {
-      if (this.searchMode === "task")
-        this.searchMode = "task-todo";
-      else if (this.searchMode === "task-todo")
-        this.searchMode = "task-done";
-      else
-        this.searchMode = "task";
-    } else {
-      if (this.taskBtn.innerText === "TASK-TODO")
-        this.searchMode = "task-todo";
-      else if (this.taskBtn.innerText === "TASK-DONE")
-        this.searchMode = "task-done";
-      else
-        this.searchMode = "task";
-    }
+    if (this.searchMode === "task")
+      this.searchMode = "task-todo";
+    else if (this.searchMode === "task-todo")
+      this.searchMode = "task-done";
+    else if (this.searchMode === "task-done")
+      this.searchMode = "task";
+    else
+      this.searchMode = "task";
     this.updateModeUI();
   }
   toggleSort() {
@@ -661,252 +637,308 @@ var FlatTagView = class extends import_obsidian.ItemView {
   }
   clearSearchBox() {
     const searchBox = this.contentEl.querySelector(".flat-tag-search-input");
-    if (searchBox) {
+    if (searchBox)
       searchBox.value = "";
-      this.tagSearchText = "";
-      this.renderTags();
-    }
+    this.tagSearchText = "";
+    this.renderTags();
   }
 };
 
 // styles.ts
 var getStyles = () => {
   return `
-    .workspace-split.mod-root .view-content.flat-tag-view {
-      display: flex;
-      flex-direction: column;
-      justify-content: flex-start;
-      align-items: stretch;
-      height: 100%;
-      padding: 0;
-      margin: 0;
-    }
+.workspace-split.mod-root .view-content.flat-tag-view {
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-start;
+	align-items: stretch;
+	height: 100%;
+	padding: 0;
+	margin: 0;
+}
 
-    .flat-tag-container {
-      display: flex;
-      flex-direction: column;
-      align-items: flex-start;
-      justify-content: flex-start;
-      width: 100%;
-      height: 100%;
-      box-sizing: border-box;
-      padding: 0;
-      margin: 0;
-    }
+.flat-tag-container {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	justify-content: flex-start;
+	width: 100%;
+	height: 100%;
+	box-sizing: border-box;
+	padding: 0;
+	margin: 0;
+}
 
-    .flat-tag-sort-container {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      flex-shrink: 0;
-      padding: 8px;
-      background-color: var(--background-primary);
-      border-bottom: 1px solid var(--background-modifier-border);
-      width: 100%;
-      flex-wrap: wrap; /* Allows searching to wrap nicely on narrow panes */
-      gap: 8px;
-    }
-    
-    .flat-tag-buttons-section {
-      display: flex;
-      gap: 6px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
-    
-    /* Base styling for our Note/Line and Task toggle buttons */
-    .flat-tag-mode-button {
-      cursor: pointer;
-      padding: 4px 10px;
-      font-size: 0.8em;
-      font-weight: 500;
-      border-radius: var(--radius-s);
-      color: var(--text-muted);
-      background-color: var(--background-modifier-form-field);
-      border: 1px solid var(--background-modifier-border);
-      transition: all 0.15s ease-in-out;
-      user-select: none;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 65px;
-    }
+.flat-tag-sort-container {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	flex-shrink: 0;
+	padding: 8px;
+	background-color: var(--background-primary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	width: 100%;
+	flex-wrap: wrap;
+	gap: 8px;
+}
 
-    /* Hover effect for inactive state */
-    .flat-tag-mode-button:hover {
-      color: var(--text-normal);
-      background-color: var(--background-modifier-hover);
-      border-color: var(--background-modifier-border-hover);
-    }
+.flat-tag-buttons-section {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	flex-wrap: wrap;
+}
 
-    /* Highly visible active (pressed) state */
-    .flat-tag-mode-button.is-active {
-      background-color: var(--interactive-accent);
-      color: var(--text-on-accent);
-      border-color: var(--interactive-accent);
-      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
-    }
+.flat-tag-mode-button {
+	cursor: pointer;
+	padding: 4px 10px;
+	font-size: 0.8em;
+	font-weight: 500;
+	border-radius: var(--radius-s);
+	color: var(--text-muted);
+	background-color: var(--background-modifier-form-field);
+	border: 1px solid var(--background-modifier-border);
+	transition: all 0.15s ease-in-out;
+	user-select: none;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 65px;
+}
 
-    /* Hover effect when active */
-    .flat-tag-mode-button.is-active:hover {
-      background-color: var(--interactive-accent-hover);
-      border-color: var(--interactive-accent-hover);
-    }
-    
-    .flat-tag-search-section {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      margin-left: auto;
-      background-color: var(--background-secondary);
-      border-radius: 4px;
-      padding: 2px 8px;
-      flex-grow: 1;
-      max-width: 200px;
-    }
-    
-    .flat-tag-search-input {
-      background: transparent;
-      border: none;
-      color: var(--text-normal);
-      width: 100%;
-      height: 24px;
-      font-size: 0.9em;
-    }
-    
-    .flat-tag-search-input:focus {
-      outline: none;
-      box-shadow: none;
-    }
-    
-    .flat-tag-search-icon {
-      color: var(--text-muted);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
+.flat-tag-mode-button:hover {
+	color: var(--text-normal);
+	background-color: var(--background-modifier-hover);
+	border-color: var(--background-modifier-border-hover);
+}
 
-    .flat-tag-search-clear-button {
-      cursor: pointer;
-      color: var(--text-muted);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 0.8em;
-    }
+.flat-tag-mode-button.is-active {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border-color: var(--interactive-accent);
+	box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
 
-    .flat-tag-search-clear-button:hover {
-      color: var(--text-normal);
-    }
+.flat-tag-mode-button.is-active:hover {
+	background-color: var(--interactive-accent-hover);
+	border-color: var(--interactive-accent-hover);
+}
 
-    .flat-tag-sort-button, .flat-tag-clear-button {
-      cursor: pointer;
-      padding: 4px;
-      border-radius: 4px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    }
+.flat-tag-search-section {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-left: auto;
+	background-color: var(--background-secondary);
+	border-radius: 4px;
+	padding: 2px 8px;
+	flex-grow: 1;
+	max-width: 220px;
+}
 
-    .flat-tag-sort-button:hover, .flat-tag-clear-button:hover {
-      background-color: var(--interactive-hover);
-    }
+.flat-tag-search-input {
+	background: transparent;
+	border: none;
+	color: var(--text-normal);
+	width: 100%;
+	height: 24px;
+	font-size: 0.9em;
+}
 
-    .flat-tag-sort-button.is-active {
-      background-color: var(--interactive-accent);
-      color: var(--text-on-accent);
-      box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
-    }
+.flat-tag-search-input:focus {
+	outline: none;
+	box-shadow: none;
+}
 
-    .flat-tag-sort-button.is-active:hover {
-      background-color: var(--interactive-accent-hover);
-    }
+.flat-tag-search-clear-button {
+	cursor: pointer;
+	color: var(--text-muted);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 0.8em;
+}
 
-    .flat-tag-list {
-      display: flex;
-      flex-wrap: wrap;
-      align-content: flex-start;
-      overflow-y: auto;
-      flex: 1;
-      line-height: 1.5em;
-      padding: 8px;
-      width: 100%;
-    }
+.flat-tag-search-clear-button:hover {
+	color: var(--text-normal);
+}
 
-    .flat-tag {
-      display: inline-block;
-      padding: 2px 6px;
-      margin: 2px;
-      border-radius: 4px;
-      cursor: pointer;
-      background-color: var(--tag-background);
-      color: var(--tag-color);
-      transition: background-color 0.1s;
-    }
+.flat-tag-sort-button,
+.flat-tag-clear-button {
+	cursor: pointer;
+	padding: 4px;
+	border-radius: 4px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
 
-    .flat-tag:hover {
-      background-color: var(--tag-background-hover);
-    }
+.flat-tag-sort-button:hover,
+.flat-tag-clear-button:hover {
+	background-color: var(--interactive-hover);
+}
 
-    .flat-tag-selected {
-      font-weight: bold;
-      background-color: var(--interactive-accent);
-      color: var(--text-on-accent);
-    }
+.flat-tag-sort-button.is-active {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+	box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.2);
+}
 
-    .flat-tag-excluded {
-      font-weight: bold;
-      background-color: var(--color-red);
-      color: var(--text-on-accent);
-    }
-    
-    .flat-tag-letter {
-      display: inline-flex;
-      font-weight: bold;
-      font-size: 1.2em;
-      margin: 2px;
-      padding: 2px 6px;
-      border-radius: 4px;
-      background-color: var(--background-secondary);
-      color: var(--text-normal);
-      align-items: center;
-      justify-content: center;
-      min-width: 24px;
-    }
+.flat-tag-sort-button.is-active:hover {
+	background-color: var(--interactive-accent-hover);
+}
 
-    .flat-tag-pinned-section {
-      width: 100%;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      background-color: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
-      border: 1px solid color-mix(in srgb, var(--interactive-accent) 25%, transparent);
-      padding: 4px;
-      border-radius: var(--radius-s);
-      margin-bottom: 4px;
-    }
+/* Cutoff controls */
+.flat-tag-cutoff-spacer {
+	flex: 0 0 8px;
+	width: 8px;
+	height: 1px;
+}
 
+.flat-tag-cutoff-section {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 2px 8px;
+	border-radius: var(--radius-s);
+	border: 1px solid var(--background-modifier-border);
+	background: linear-gradient(180deg, var(--background-secondary) 0%, var(--background-primary) 100%);
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+	height: 28px;
+}
 
-    .flat-tag-separator {
-      width: 100%;
-      height: 1px;
-      background-color: var(--background-modifier-border);
-      margin: 4px 0 8px 0;
-    }
-    
-    .flat-tag-pinned {
-      border: 1px solid var(--interactive-accent);
-    }
+.flat-tag-cutoff-toggle {
+	cursor: pointer;
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--text-muted);
+	padding: 2px;
+	border-radius: var(--radius-s);
+}
 
-  `;
+.flat-tag-cutoff-toggle:hover {
+	color: var(--text-normal);
+	background-color: var(--background-modifier-hover);
+}
+
+.flat-tag-cutoff-toggle.is-enabled {
+	color: var(--interactive-accent);
+}
+
+.flat-tag-cutoff-toggle.is-disabled {
+	opacity: 0.7;
+}
+
+.flat-tag-cutoff-input {
+	width: 52px;
+	height: 22px;
+	border: none;
+	background: transparent;
+	padding: 0;
+	margin: 0;
+	text-align: center;
+	font-size: 0.9em;
+	color: var(--text-normal);
+}
+
+.flat-tag-cutoff-input:focus {
+	outline: none;
+	box-shadow: none;
+}
+
+.flat-tag-cutoff-input:disabled {
+	color: var(--text-faint);
+	cursor: not-allowed;
+}
+
+.flat-tag-list {
+	display: flex;
+	flex-wrap: wrap;
+	align-content: flex-start;
+	overflow-y: auto;
+	flex: 1;
+	line-height: 1.5em;
+	padding: 8px;
+	width: 100%;
+}
+
+.flat-tag {
+	display: inline-block;
+	padding: 2px 6px;
+	margin: 2px;
+	border-radius: 4px;
+	cursor: pointer;
+	background-color: var(--tag-background);
+	color: var(--tag-color);
+	transition: background-color 0.1s;
+}
+
+.flat-tag:hover {
+	background-color: var(--tag-background-hover);
+}
+
+.flat-tag-selected {
+	font-weight: bold;
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.flat-tag-excluded {
+	font-weight: bold;
+	background-color: var(--color-red);
+	color: var(--text-on-accent);
+}
+
+.flat-tag-letter {
+	display: inline-flex;
+	font-weight: bold;
+	font-size: 1.2em;
+	margin: 2px;
+	padding: 2px 6px;
+	border-radius: 4px;
+	background-color: var(--background-secondary);
+	color: var(--text-normal);
+	align-items: center;
+	justify-content: center;
+	min-width: 24px;
+}
+
+.flat-tag-pinned-section {
+	width: 100%;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	background-color: color-mix(in srgb, var(--interactive-accent) 10%, var(--background-primary));
+	border: 1px solid color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+	padding: 4px;
+	border-radius: var(--radius-s);
+	margin-bottom: 4px;
+}
+
+.flat-tag-separator {
+	width: 100%;
+	height: 1px;
+	background-color: var(--background-modifier-border);
+	margin: 4px 0 8px 0;
+}
+
+.flat-tag-pinned {
+	border: 1px solid var(--interactive-accent);
+}
+`;
 };
 
 // settings.ts
 var import_obsidian2 = require("obsidian");
 var DEFAULT_SETTINGS = {
   pinnedTags: [],
-  frequencyCutoff: 0
-  // 0 means show all tags
+  frequencyCutoff: 0,
+  frequencyCutoffEnabled: false,
+  altClickTagMode: "start-line",
+  showPlacementInStatusBar: true,
+  mobileLongPressEnabled: true,
+  mobileLongPressMs: 1e3
 };
 var FlatTagSettingTab = class extends import_obsidian2.PluginSettingTab {
   constructor(app, plugin) {
@@ -916,7 +948,24 @@ var FlatTagSettingTab = class extends import_obsidian2.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian2.Setting(containerEl).setName("Frequency Cutoff").setDesc("Hide tags that appear fewer times than this number in the vault. 0 means show all tags.").addText(
+    new import_obsidian2.Setting(containerEl).setName("Alt-click tag placement").setDesc("When creating a tag, where it should go.").addDropdown(
+      (dd) => dd.addOption("start-line", "Put tag at start of line").addOption("in-place", "Turn word into tag in place").addOption("end-line", "Put tag at end of line").setValue(this.plugin.settings.altClickTagMode).onChange(async (value) => {
+        this.plugin.settings.altClickTagMode = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian2.Setting(containerEl).setName("Show placement of newly created tags in status bar").setDesc("Displays SOL / INP / EOL in the Obsidian status bar.").addToggle(
+      (t) => t.setValue(this.plugin.settings.showPlacementInStatusBar).onChange(async (val) => {
+        this.plugin.settings.showPlacementInStatusBar = val;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian2.Setting(containerEl).setName("Frequency cutoff").setDesc("Hide tags that appear fewer times than this number in the vault.").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.frequencyCutoffEnabled).onChange(async (value) => {
+        this.plugin.settings.frequencyCutoffEnabled = value;
+        await this.plugin.saveSettings();
+      })
+    ).addText(
       (text) => text.setPlaceholder("0").setValue(this.plugin.settings.frequencyCutoff.toString()).onChange(async (value) => {
         const parsed = parseInt(value, 10);
         if (!isNaN(parsed) && parsed >= 0) {
@@ -925,8 +974,8 @@ var FlatTagSettingTab = class extends import_obsidian2.PluginSettingTab {
         }
       })
     );
-    new import_obsidian2.Setting(containerEl).setName("Clear Pinned Tags").setDesc("Removes all pinned tags from the top of the flat tag list.").addButton(
-      (btn) => btn.setButtonText("Clear Pinned").onClick(async () => {
+    new import_obsidian2.Setting(containerEl).setName("Clear pinned tags").setDesc("Removes all pinned tags from the top of the flat tag list.").addButton(
+      (btn) => btn.setButtonText("Clear pinned").onClick(async () => {
         this.plugin.settings.pinnedTags = [];
         await this.plugin.saveSettings();
       })
@@ -936,23 +985,19 @@ var FlatTagSettingTab = class extends import_obsidian2.PluginSettingTab {
 
 // main.ts
 var FlatTagPlugin = class extends import_obsidian3.Plugin {
+  constructor() {
+    super(...arguments);
+    this.statusBarEl = null;
+  }
   async onload() {
     await this.loadSettings();
-    this.registerView(
-      VIEW_TYPE,
-      // Pass 'this' so the view can access settings and save data
-      (leaf) => new FlatTagView(leaf, this)
-    );
-    this.addRibbonIcon("tag", "Open Flat Tags", () => {
-      this.activateView();
-    });
+    this.registerView(VIEW_TYPE, (leaf) => new FlatTagView(leaf, this));
+    this.addRibbonIcon("tag", "Open Flat Tags", () => void this.activateView());
     this.addSettingTab(new FlatTagSettingTab(this.app, this));
     this.addCommand({
       id: "open-flat-tags",
       name: "Open Flat Tags",
-      callback: () => {
-        this.activateView();
-      }
+      callback: () => void this.activateView()
     });
     this.addCommand({
       id: "toggle-flat-tag-sort",
@@ -1004,31 +1049,454 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
           view.toggleTaskMode();
       }
     });
+    this.addCommand({
+      id: "cycle-flat-tag-placement",
+      name: "Cycle Tag Placement (SOL / INP / EOL)",
+      callback: async () => {
+        const modes = ["start-line", "in-place", "end-line"];
+        const current = this.settings.altClickTagMode;
+        const next = modes[(modes.indexOf(current) + 1) % modes.length];
+        this.settings.altClickTagMode = next;
+        await this.saveSettings();
+        const labels = {
+          "start-line": "Start of line",
+          "in-place": "In place",
+          "end-line": "End of line"
+        };
+        new import_obsidian3.Notice(`Tag placement: ${labels[next]}`);
+      }
+    });
     this.addStyle();
+    this.statusBarEl = this.addStatusBarItem();
+    this.updateStatusBar();
+    this.registerDomEvent(document, "click", (evt) => {
+      if (!evt.altKey)
+        return;
+      void this.handleEditorTrigger({ kind: "alt-click", mouseEvent: evt });
+    });
+    this.registerMobileLongPress();
   }
+  onunload() {
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
+    if (this.statusBarEl) {
+      this.statusBarEl.remove();
+      this.statusBarEl = null;
+    }
+  }
+  // ── Status bar ──────────────────────────────────────────────────────────────ok
+  updateStatusBar() {
+    var _a, _b;
+    if (!this.statusBarEl)
+      return;
+    const show = (_a = this.settings.showPlacementInStatusBar) != null ? _a : true;
+    if (!show) {
+      this.statusBarEl.setText("");
+      this.statusBarEl.hide();
+      return;
+    }
+    const labels = {
+      "start-line": "SOL",
+      "in-place": "INP",
+      "end-line": "EOL"
+    };
+    const modeLabel = (_b = labels[this.settings.altClickTagMode]) != null ? _b : "SOL";
+    this.statusBarEl.setText(`#>${modeLabel}`);
+    this.statusBarEl.show();
+  }
+  // ── Mobile long press ────────────────────────────────────────────────────────
+  registerMobileLongPress() {
+    if (!import_obsidian3.Platform.isMobile)
+      return;
+    let timer = null;
+    let startX = 0;
+    let startY = 0;
+    let cancelled = false;
+    let longPressArmed = false;
+    const clear = () => {
+      if (timer)
+        window.clearTimeout(timer);
+      timer = null;
+      longPressArmed = false;
+    };
+    this.registerDomEvent(
+      document,
+      "touchstart",
+      (evt) => {
+        var _a;
+        if (!this.settings.mobileLongPressEnabled)
+          return;
+        if (evt.touches.length !== 1)
+          return;
+        cancelled = false;
+        longPressArmed = false;
+        const t = evt.touches[0];
+        startX = t.clientX;
+        startY = t.clientY;
+        clear();
+        const ms = Math.max(250, Math.min(5e3, (_a = this.settings.mobileLongPressMs) != null ? _a : 1e3));
+        timer = window.setTimeout(() => {
+          timer = null;
+          if (cancelled)
+            return;
+          longPressArmed = true;
+        }, ms);
+      },
+      { passive: true }
+    );
+    this.registerDomEvent(
+      document,
+      "touchmove",
+      (evt) => {
+        if (!timer)
+          return;
+        const t = evt.touches[0];
+        const dx = Math.abs(t.clientX - startX);
+        const dy = Math.abs(t.clientY - startY);
+        if (dx > 12 || dy > 12) {
+          cancelled = true;
+          clear();
+        }
+      },
+      { passive: true }
+    );
+    this.registerDomEvent(
+      document,
+      "touchend",
+      () => {
+        const shouldFire = longPressArmed && !cancelled;
+        clear();
+        if (!shouldFire)
+          return;
+        void this.handleEditorTrigger({ kind: "mobile-long-press" });
+      },
+      { passive: true }
+    );
+    this.registerDomEvent(
+      document,
+      "touchcancel",
+      () => {
+        cancelled = true;
+        clear();
+      },
+      { passive: true }
+    );
+  }
+  // ── Trigger entry-point ──────────────────────────────────────────────────────
+  async handleEditorTrigger(trigger) {
+    const view = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
+    if (!view)
+      return;
+    const anyView = view;
+    if (typeof anyView.getMode === "function" && anyView.getMode() !== "source")
+      return;
+    const editor = view.editor;
+    if (!editor)
+      return;
+    if (trigger.kind === "mobile-long-press") {
+      const sel = editor.getSelection();
+      if (!sel || !sel.trim())
+        return;
+    }
+    const candidate = this.getCandidateWithRange(editor, { preferSelection: import_obsidian3.Platform.isMobile });
+    if (!candidate)
+      return;
+    if (candidate.raw.startsWith("#")) {
+      await this.removeTag(editor, candidate);
+    } else {
+      await this.createTag(editor, this.settings.altClickTagMode, candidate);
+    }
+  }
+  // ── Candidate resolution ─────────────────────────────────────────────────────
+  getSelectionRange(editor) {
+    var _a, _b;
+    const anyEditor = editor;
+    const from = (_a = anyEditor.getCursor) == null ? void 0 : _a.call(anyEditor, "from");
+    const to = (_b = anyEditor.getCursor) == null ? void 0 : _b.call(anyEditor, "to");
+    if (!from || !to)
+      return null;
+    if (from.line === to.line && from.ch === to.ch)
+      return null;
+    if (from.line > to.line || from.line === to.line && from.ch > to.ch)
+      return { from: to, to: from };
+    return { from, to };
+  }
+  buildSelCandidate(editor, sel, r) {
+    const raw = sel.trim();
+    if (!raw.startsWith("#") && r.from.ch > 0) {
+      const lineText = editor.getLine(r.from.line);
+      if (lineText.charAt(r.from.ch - 1) === "#") {
+        return {
+          raw: "#" + raw,
+          range: { from: { line: r.from.line, ch: r.from.ch - 1 }, to: r.to }
+        };
+      }
+    }
+    return { raw, range: r };
+  }
+  getCandidateWithRange(editor, opts) {
+    var _a;
+    const preferSelection = (_a = opts == null ? void 0 : opts.preferSelection) != null ? _a : true;
+    const sel = editor.getSelection();
+    const selRange = this.getSelectionRange(editor);
+    if (preferSelection && sel && sel.trim() && !/[\r\n]/.test(sel) && selRange) {
+      return this.buildSelCandidate(editor, sel, selRange);
+    }
+    const token = this.getTokenAtCursor(editor);
+    if (token)
+      return token;
+    if (!preferSelection && sel && sel.trim() && !/[\r\n]/.test(sel) && selRange) {
+      return this.buildSelCandidate(editor, sel, selRange);
+    }
+    return null;
+  }
+  getTokenAtCursor(editor) {
+    var _a;
+    const cursor = editor.getCursor();
+    const lineText = (_a = editor.getLine(cursor.line)) != null ? _a : "";
+    if (!lineText)
+      return null;
+    const isBodyChar = (ch) => /[\p{L}\p{N}_-]/u.test(ch);
+    let i = cursor.ch;
+    if (i >= lineText.length)
+      i = lineText.length - 1;
+    if (i < 0)
+      return null;
+    const cur = lineText.charAt(i);
+    if (cur === "#") {
+      let end = i + 1;
+      while (end < lineText.length && isBodyChar(lineText.charAt(end)))
+        end++;
+      if (end === i + 1)
+        return null;
+      return {
+        raw: lineText.slice(i, end),
+        range: { from: { line: cursor.line, ch: i }, to: { line: cursor.line, ch: end } }
+      };
+    }
+    if (isBodyChar(cur)) {
+      return this.wordRangeAt(cursor.line, lineText, i);
+    }
+    if (i > 0 && isBodyChar(lineText.charAt(i - 1))) {
+      return this.wordRangeAt(cursor.line, lineText, i - 1);
+    }
+    return null;
+  }
+  wordRangeAt(line, lineText, i) {
+    const isBodyChar = (ch) => /[\p{L}\p{N}_-]/u.test(ch);
+    let start = i;
+    while (start > 0 && isBodyChar(lineText.charAt(start - 1)))
+      start--;
+    const hashStart = start > 0 && lineText.charAt(start - 1) === "#" ? start - 1 : start;
+    let end = i + 1;
+    while (end < lineText.length && isBodyChar(lineText.charAt(end)))
+      end++;
+    const raw = lineText.slice(hashStart, end);
+    if (!raw.trim())
+      return null;
+    return {
+      raw,
+      range: { from: { line, ch: hashStart }, to: { line, ch: end } }
+    };
+  }
+  // ── Validation ───────────────────────────────────────────────────────────────
+  hasForbiddenChars(raw) {
+    const s = raw.trim();
+    if (!s)
+      return true;
+    const body = s.startsWith("#") ? s.slice(1) : s;
+    if (body.includes("#"))
+      return true;
+    return /[!@$%^&*()+= <>,./?`~]/.test(body);
+  }
+  normalizeCandidate(raw) {
+    let t = raw.trim();
+    if (!t)
+      return null;
+    if (this.hasForbiddenChars(t))
+      return null;
+    if (t.startsWith("#"))
+      t = t.slice(1);
+    if (!t)
+      return null;
+    if (/^\d+$/.test(t))
+      return null;
+    if (/\s/.test(t))
+      return null;
+    return t;
+  }
+  // ── Tag helpers ──────────────────────────────────────────────────────────────
+  tagTokenForPlacement(candidate, mode) {
+    const text = mode === "start-line" || mode === "end-line" ? candidate.toLowerCase() : candidate;
+    return `#${text}`;
+  }
+  sortTags(tokens) {
+    const uniq = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const t of tokens) {
+      const key = t.replace(/^#/, "").toLowerCase();
+      if (seen.has(key))
+        continue;
+      seen.add(key);
+      uniq.push(t);
+    }
+    return uniq.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase(), "pl"));
+  }
+  // ── Line parsing ─────────────────────────────────────────────────────────────
+  parseLeadingTags(lineText) {
+    var _a, _b, _c;
+    const indent = ((_a = lineText.match(/^\s*/)) != null ? _a : [""])[0];
+    const rest = lineText.slice(indent.length);
+    const m = rest.match(/^((?:#[^\s#]+\s+)*)/);
+    const tagBlock = (_b = m == null ? void 0 : m[1]) != null ? _b : "";
+    const tags = (_c = tagBlock.match(/#[^\s#]+/g)) != null ? _c : [];
+    const after = rest.slice(tagBlock.length);
+    return { indent, tagBlock, tags, after };
+  }
+  splitBlockIdSuffix(lineText) {
+    var _a;
+    const trailingWs = ((_a = lineText.match(/\s*$/)) != null ? _a : [""])[0];
+    const noTrail = lineText.slice(0, lineText.length - trailingWs.length);
+    const m = noTrail.match(/(\s\^[\p{L}\p{N}_-]+)$/u);
+    if (!m)
+      return { core: noTrail, blockId: "", trailingWs };
+    const blockWithSpace = m[1];
+    const core = noTrail.slice(0, noTrail.length - blockWithSpace.length);
+    const blockId = blockWithSpace.trim();
+    return { core, blockId, trailingWs };
+  }
+  parseTrailingTags(coreText) {
+    var _a;
+    const m = coreText.match(/(\s+(?:#[^\s#]+\s*)+)$/);
+    if (!m)
+      return { before: coreText, tags: [] };
+    const tagBlock = m[1];
+    const tags = (_a = tagBlock.match(/#[^\s#]+/g)) != null ? _a : [];
+    const before = coreText.slice(0, coreText.length - tagBlock.length);
+    return { before, tags };
+  }
+  buildLineWithLeading(indent, tags, after) {
+    const afterClean = after.replace(/^\s+/, "");
+    const tagBlock = tags.join(" ");
+    const body = tagBlock ? afterClean ? `${tagBlock} ${afterClean}` : tagBlock : afterClean;
+    return `${indent}${body}`;
+  }
+  buildLineWithTrailing(before, tags, blockId, trailingWs) {
+    const beforeClean = before.replace(/\s+$/, "");
+    const tagBlock = tags.join(" ");
+    const parts = [];
+    if (beforeClean)
+      parts.push(beforeClean);
+    if (tagBlock)
+      parts.push(tagBlock);
+    if (blockId)
+      parts.push(blockId);
+    return `${parts.join(" ")}${trailingWs}`;
+  }
+  // ── Create / Remove ─────────────────────────────────────────────────────────
+  async createTag(editor, mode, candidate) {
+    const normalized = this.normalizeCandidate(candidate.raw);
+    if (!normalized)
+      return;
+    const tagToken = this.tagTokenForPlacement(normalized, mode);
+    if (mode === "in-place") {
+      if (candidate.range)
+        editor.replaceRange(tagToken, candidate.range.from, candidate.range.to);
+      else
+        editor.replaceSelection(tagToken);
+      return;
+    }
+    const line = editor.getCursor().line;
+    const lineText = editor.getLine(line);
+    if (mode === "start-line") {
+      const lead = this.parseLeadingTags(lineText);
+      const next2 = this.sortTags([...lead.tags, tagToken]);
+      const newLine2 = this.buildLineWithLeading(lead.indent, next2, lead.after);
+      editor.replaceRange(newLine2, { line, ch: 0 }, { line, ch: lineText.length });
+      return;
+    }
+    const split = this.splitBlockIdSuffix(lineText);
+    const trail = this.parseTrailingTags(split.core);
+    const next = this.sortTags([...trail.tags, tagToken]);
+    const newLine = this.buildLineWithTrailing(trail.before, next, split.blockId, split.trailingWs);
+    editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+  }
+  async removeTag(editor, candidate) {
+    var _a, _b, _c, _d, _e, _f;
+    const normalized = this.normalizeCandidate(candidate.raw);
+    if (!normalized)
+      return;
+    const key = normalized.toLowerCase();
+    const cursor = editor.getCursor();
+    const line = (_c = (_b = (_a = candidate.range) == null ? void 0 : _a.from) == null ? void 0 : _b.line) != null ? _c : cursor.line;
+    if (candidate.range && (candidate.range.from.line !== line || candidate.range.to.line !== line))
+      return;
+    const lineText = editor.getLine(line);
+    const ch = (_f = (_e = (_d = candidate.range) == null ? void 0 : _d.from) == null ? void 0 : _e.ch) != null ? _f : cursor.ch;
+    const lead = this.parseLeadingTags(lineText);
+    const split = this.splitBlockIdSuffix(lineText);
+    const trail = this.parseTrailingTags(split.core);
+    const leadStart = lead.indent.length;
+    const leadEnd = leadStart + lead.tagBlock.length;
+    const trailStart = trail.before.length;
+    const trailEnd = split.core.length;
+    const inLeading = ch >= leadStart && ch < leadEnd;
+    const inTrailing = ch >= trailStart && ch < trailEnd;
+    const leadHas = lead.tags.some((t) => t.replace(/^#/, "").toLowerCase() === key);
+    const trailHas = trail.tags.some((t) => t.replace(/^#/, "").toLowerCase() === key);
+    if (leadHas && (inLeading || !trailHas)) {
+      const kept = lead.tags.filter((t) => t.replace(/^#/, "").toLowerCase() !== key);
+      const newLine = this.buildLineWithLeading(lead.indent, kept, lead.after);
+      editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+      return;
+    }
+    if (trailHas && (inTrailing || !leadHas)) {
+      const kept = trail.tags.filter((t) => t.replace(/^#/, "").toLowerCase() !== key);
+      const newLine = this.buildLineWithTrailing(trail.before, kept, split.blockId, split.trailingWs);
+      editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+      return;
+    }
+    if (candidate.range) {
+      const selected = editor.getRange(candidate.range.from, candidate.range.to);
+      if (selected && selected.startsWith("#")) {
+        editor.replaceRange(selected.slice(1), candidate.range.from, candidate.range.to);
+      }
+    }
+  }
+  // ── Settings ────────────────────────────────────────────────────────────────
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    var _a;
+    const loaded = (_a = await this.loadData()) != null ? _a : {};
+    const anyLoaded = loaded;
+    const mode = anyLoaded.altClickTagMode;
+    this.settings = {
+      pinnedTags: Array.isArray(anyLoaded.pinnedTags) ? anyLoaded.pinnedTags.filter((t) => typeof t === "string") : DEFAULT_SETTINGS.pinnedTags,
+      frequencyCutoff: typeof anyLoaded.frequencyCutoff === "number" && !isNaN(anyLoaded.frequencyCutoff) ? Math.max(0, Math.floor(anyLoaded.frequencyCutoff)) : DEFAULT_SETTINGS.frequencyCutoff,
+      frequencyCutoffEnabled: typeof anyLoaded.frequencyCutoffEnabled === "boolean" ? anyLoaded.frequencyCutoffEnabled : DEFAULT_SETTINGS.frequencyCutoffEnabled,
+      altClickTagMode: mode === "start-line" || mode === "in-place" || mode === "end-line" ? mode : DEFAULT_SETTINGS.altClickTagMode,
+      mobileLongPressEnabled: typeof anyLoaded.mobileLongPressEnabled === "boolean" ? anyLoaded.mobileLongPressEnabled : DEFAULT_SETTINGS.mobileLongPressEnabled,
+      mobileLongPressMs: typeof anyLoaded.mobileLongPressMs === "number" && !isNaN(anyLoaded.mobileLongPressMs) ? Math.max(250, Math.min(5e3, Math.floor(anyLoaded.mobileLongPressMs))) : DEFAULT_SETTINGS.mobileLongPressMs,
+      // NEW: persisted status-bar toggle
+      showPlacementInStatusBar: typeof anyLoaded.showPlacementInStatusBar === "boolean" ? anyLoaded.showPlacementInStatusBar : DEFAULT_SETTINGS.showPlacementInStatusBar
+    };
+    await this.saveData(this.settings);
   }
   async saveSettings() {
     await this.saveData(this.settings);
     this.app.workspace.trigger("flat-tag-view:settings-updated");
+    this.updateStatusBar();
   }
-  async onunload() {
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE);
-  }
+  // ── View activation / style ────────────────────────────────────────────────
   async activateView() {
-    const { workspace } = this.app;
+    const workspace = this.app.workspace;
     let leaf = workspace.getLeavesOfType(VIEW_TYPE)[0];
     if (!leaf) {
       const rightLeaf = workspace.getRightLeaf(false);
-      if (rightLeaf) {
-        leaf = rightLeaf;
-        await leaf.setViewState({ type: VIEW_TYPE });
-      }
+      if (!rightLeaf)
+        return;
+      leaf = rightLeaf;
+      await leaf.setViewState({ type: VIEW_TYPE });
     }
-    if (leaf) {
-      workspace.revealLeaf(leaf);
-    }
+    workspace.revealLeaf(leaf);
   }
   addStyle() {
     const styleEl = document.createElement("style");

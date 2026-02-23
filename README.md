@@ -4,7 +4,7 @@ Displays tags in a flat, space-separated format with multi-select filtering, sor
 
 ![flat-tag-view-buttons](./flat-tag-view-see-me.png)
 
-Flat Tag View Pane
+## Flat Tag View Pane
 - **Core feature: select multiple tags and filter FTV view with ctrl-click**
 - Add negative selection with shift-click (do not show files with this tag)
 - Pin/unpin commonly accessed tags to top of the view with alt-click
@@ -15,9 +15,6 @@ Flat Tag View Pane
 - Simple search for tags with clear button
 - Configurable hotkeys
 - Automatically focuses search pane and sends selected tags to it
-Tag insertion in Editor
-- **Alt-click in editor to insert or remove tags** — at start of line (SOL), in place (INP), or end of line (EOL)
-- Status bar indicator showing current tag insertion placement mode (SOL / INP / EOL)
 
 ## Tag Insertion (Editor)
 
@@ -37,12 +34,13 @@ FTV works on Obsidian for Android and (probably) on iOS (not tested) without any
 
 ## Settings
 
-| Setting                      | Description                                            |
-| ---------------------------- | ------------------------------------------------------ |
-| Alt-click tag placement      | SOL / INP / EOL — where a newly created tag is placed  |
-| Show placement in status bar | Displays SOL / INP / EOL in the Obsidian status bar    |
-| Frequency cutoff             | Hides tags that appear fewer than N times in the vault |
-| Clear pinned tags            | Removes all pinned tags from the top section           |
+| Area | Setting                      | Description                                            |
+| ---- | ---------------------------- | ------------------------------------------------------ |
+| Tags Pane | Frequency cutoff             | Hides tags that appear fewer than N times in the vault |
+| Tags Pane | Clear pinned tags            | Removes all pinned tags from the top section           |
+| Tag insertion | Alt-click tag placement      | SOL / INP / EOL — where a newly created tag is placed  |
+| Tag insertion | Show placement in status bar | Displays SOL / INP / EOL in the Obsidian status bar    |
+
 
 ## Hotkeys
 
@@ -66,18 +64,18 @@ All hotkeys are unbound by default and can be assigned in Obsidian Settings → 
 - _0.3.0 gpt 5.2 / gemini 3.1 pro_
 
 ### ver. 0.3.0 changelog
-- tag insertion and deletion
+- added: tag insertion and deletion
 	- alt-click tag insertion in editor (SOL / INP / EOL modes)
 		- modes: start of line, in place, end of line
 		- auto-detection: alt-click on existing `#tag` removes it, on plain word creates it
 		- tag insertion preserves `^block-id` suffix when placing tags at end of line
 		- newly inserted tags are sorted alphabetically with existing leading/trailing tags
 	- added: status bar indicator showing current tag placement mode (SOL / INP / EOL)
-		- added: "Show placement in status bar" toggle in settings
-	- added "Cycle Tag Placement" hotkey command
+	- added: "Show placement in status bar" toggle in settings
+	- added: "Cycle Tag Placement" hotkey command
 - ~~added mobile long-press support for editor tag insertion~~
-- improved touch handling in tag list (fixed double-fire from synthetic click events)
-- improved optimistic CSS update on tag selection (no more colour lag on long-press)
+- improved: touch handling in tag list (fixed double-fire from synthetic click events)
+- improved: optimistic CSS update on tag selection (no more colour lag on long-press)
 - code: refactored mobile touch state to per-element closures
 
 ### ver. 0.2.2 changelog

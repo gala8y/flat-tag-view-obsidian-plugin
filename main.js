@@ -228,27 +228,19 @@ var FlatTagView = class extends import_obsidian.ItemView {
     let sortedTags = Array.from(normal.entries());
     if (this.currentSort === "az") {
       sortedTags.sort((a, b) => a[0].localeCompare(b[0], "pl"));
-      const polishDiacritics = ["\u0104", "\u0106", "\u0118", "\u0141", "\u0143", "\xD3", "\u015A", "\u0179", "\u017B"];
-      const buckets = /* @__PURE__ */ new Map();
-      for (let c = 65; c <= 90; c++)
-        buckets.set(String.fromCharCode(c), []);
-      polishDiacritics.forEach((l) => buckets.set(l, []));
-      buckets.set("OTHER", []);
-      for (const item of sortedTags) {
-        const first = (item[0].charAt(0) || "").toUpperCase();
-        if (buckets.has(first))
-          buckets.get(first).push(item);
-        else
-          buckets.get("OTHER").push(item);
-      }
-      for (const [letter, items] of buckets.entries()) {
-        if (items.length === 0)
-          continue;
-        if (letter !== "OTHER") {
-          const letterEl = this.tagContainer.createSpan({ cls: "flat-tag-letter" });
-          letterEl.setText(letter);
+      let currentHeader = "";
+      for (const [tag, count] of sortedTags) {
+        const firstChar = (Array.from(tag)[0] || "").toUpperCase();
+        const isLetter = /^\p{L}$/u.test(firstChar);
+        const headerToUse = isLetter ? firstChar : "OTHER";
+        if (headerToUse !== currentHeader) {
+          currentHeader = headerToUse;
+          if (currentHeader !== "OTHER") {
+            const letterEl = this.tagContainer.createSpan({ cls: "flat-tag-letter" });
+            letterEl.setText(currentHeader);
+          }
         }
-        items.forEach(([tag, count]) => this.createTagElement(tag, count, this.tagContainer));
+        this.createTagElement(tag, count, this.tagContainer);
       }
     } else {
       sortedTags.sort((a, b) => {

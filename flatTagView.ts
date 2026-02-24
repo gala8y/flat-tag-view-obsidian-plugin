@@ -231,27 +231,33 @@ export class FlatTagView extends ItemView {
 		let sortedTags = Array.from(normal.entries());
 
 		if (this.currentSort === "az") {
+			// 1. Sort properly using Polish locale. 
+			// localeCompare naturally places digits and symbols BEFORE letters.
 			sortedTags.sort((a, b) => a[0].localeCompare(b[0], "pl"));
 
-			const polishDiacritics = ["Ą", "Ć", "Ę", "Ł", "Ń", "Ó", "Ś", "Ź", "Ż"];
-			const buckets = new Map<string, [string, number][]>();
-			for (let c = 65; c <= 90; c++) buckets.set(String.fromCharCode(c), []);
-			polishDiacritics.forEach(l => buckets.set(l, []));
-			buckets.set("OTHER", []);
+			let currentHeader = "";
 
-			for (const item of sortedTags) {
-				const first = (item[0].charAt(0) || "").toUpperCase();
-				if (buckets.has(first)) buckets.get(first)!.push(item);
-				else buckets.get("OTHER")!.push(item);
-			}
+			for (const [tag, count] of sortedTags) {
+				// Array.from() safely grabs the first character, even if it's a complex Emoji
+				const firstChar = (Array.from(tag)[0] || "").toUpperCase();
+				
+				// \p{L} matches ANY letter in any language. 
+				// If it's a number, punctuation, or emoji, this returns false.
+				const isLetter = /^\p{L}$/u.test(firstChar);
+				
+				const headerToUse = isLetter ? firstChar : "OTHER";
 
-			for (const [letter, items] of buckets.entries()) {
-				if (items.length === 0) continue;
-				if (letter !== "OTHER") {
-					const letterEl = this.tagContainer.createSpan({ cls: "flat-tag-letter" });
-					letterEl.setText(letter);
+				// If we encounter a new starting letter, print a new category header
+				if (headerToUse !== currentHeader) {
+					currentHeader = headerToUse;
+					if (currentHeader !== "OTHER") {
+						const letterEl = this.tagContainer.createSpan({ cls: "flat-tag-letter" });
+						letterEl.setText(currentHeader);
+					}
 				}
-				items.forEach(([tag, count]) => this.createTagElement(tag, count, this.tagContainer));
+
+				// Render the tag itself
+				this.createTagElement(tag, count, this.tagContainer);
 			}
 		} else {
 			sortedTags.sort((a, b) => {

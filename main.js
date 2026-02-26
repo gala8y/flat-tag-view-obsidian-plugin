@@ -33,6 +33,39 @@ var VIEW_TYPE = "flat-tag-view";
 
 // flatTagView.ts
 var import_obsidian = require("obsidian");
+var GlobalMuteConfirmModal = class extends import_obsidian.Modal {
+  constructor(app, tagToMute, onConfirm) {
+    super(app);
+    this.tagToMute = tagToMute;
+    this.onConfirm = onConfirm;
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Global Mute Tag" });
+    const isCurrentlyMuted = this.tagToMute.startsWith("%");
+    const targetState = isCurrentlyMuted ? "UN-MUTE" : "MUTE";
+    const resultingTag = isCurrentlyMuted ? `#${this.tagToMute.slice(1)}` : `#%${this.tagToMute}`;
+    contentEl.createEl("p", {
+      text: `Are you sure you want to globally ${targetState} the tag #${this.tagToMute}?`
+    });
+    contentEl.createEl("p", {
+      text: `This will search your entire vault and change every instance to ${resultingTag}. This action modifies your files and cannot be easily undone.`
+    });
+    new import_obsidian.Setting(contentEl).addButton(
+      (btn) => btn.setButtonText("Cancel").onClick(() => this.close())
+    ).addButton(
+      (btn) => btn.setButtonText(`Yes, ${targetState} Globally`).setCta().onClick(() => {
+        this.onConfirm();
+        this.close();
+      })
+    );
+  }
+  onClose() {
+    const { contentEl } = this;
+    contentEl.empty();
+  }
+};
 var FlatTagView = class extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -108,12 +141,24 @@ var FlatTagView = class extends import_obsidian.ItemView {
       }
     });
     this.sortAzBtn.addEventListener("click", () => {
-      this.currentSort = "az";
-      this.updateModeUI(true);
+      if (this.currentSort === "az") {
+        const vaultName = this.app.vault.getName();
+        const count = Object.keys(this.app.metadataCache.getTags()).length;
+        new import_obsidian.Notice(`'${vaultName}': ${count} unique tags`);
+      } else {
+        this.currentSort = "az";
+        this.updateModeUI(true);
+      }
     });
     this.sortCountBtn.addEventListener("click", () => {
-      this.currentSort = "count";
-      this.updateModeUI(true);
+      if (this.currentSort === "count") {
+        const vaultName = this.app.vault.getName();
+        const count = Object.keys(this.app.metadataCache.getTags()).length;
+        new import_obsidian.Notice(`'${vaultName}': ${count} unique tags`);
+      } else {
+        this.currentSort = "count";
+        this.updateModeUI(true);
+      }
     });
     this.scopeBtn.addEventListener("click", () => this.toggleScopeMode());
     this.taskBtn.addEventListener("click", () => this.toggleTaskMode());
@@ -227,7 +272,18 @@ var FlatTagView = class extends import_obsidian.ItemView {
     }
     let sortedTags = Array.from(normal.entries());
     if (this.currentSort === "az") {
-      sortedTags.sort((a, b) => a[0].localeCompare(b[0], "pl"));
+      const collator = new Intl.Collator("pl", { numeric: true, sensitivity: "base" });
+      sortedTags.sort((a, b) => {
+        const charA = Array.from(a[0])[0] || "";
+        const charB = Array.from(b[0])[0] || "";
+        const isLetterA = /^\p{L}$/u.test(charA);
+        const isLetterB = /^\p{L}$/u.test(charB);
+        if (!isLetterA && isLetterB)
+          return -1;
+        if (isLetterA && !isLetterB)
+          return 1;
+        return collator.compare(a[0], b[0]);
+      });
       let currentHeader = "";
       for (const [tag, count] of sortedTags) {
         const firstChar = (Array.from(tag)[0] || "").toUpperCase();
@@ -321,6 +377,21 @@ var FlatTagView = class extends import_obsidian.ItemView {
       e.preventDefault();
       void handleTagInteraction(!!(e.ctrlKey || e.metaKey), !!e.shiftKey, !!e.altKey);
     });
+    tagEl.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const menu = new import_obsidian.Menu();
+      const isMuted = tag.startsWith("%");
+      const actionName = isMuted ? "Global Un-Mute" : "Global Mute";
+      const targetTag = isMuted ? tag.slice(1) : `%${tag}`;
+      menu.addItem((item) => {
+        item.setTitle(`${actionName} to #${targetTag}`).setIcon("alert-triangle").onClick(() => {
+          new GlobalMuteConfirmModal(this.app, tag, async () => {
+            await this.executeGlobalMute(tag);
+          }).open();
+        });
+      });
+      menu.showAtMouseEvent(e);
+    });
     tagEl.addEventListener("touchstart", (e) => {
       const touch = e.touches[0];
       touchStartX = touch.clientX;
@@ -408,6 +479,38 @@ var FlatTagView = class extends import_obsidian.ItemView {
       }, 220);
     }, { passive: true });
   }
+  // ── Execute Global Mute logic ───────────────────────────────────────────
+  async executeGlobalMute(tag) {
+    const isCurrentlyMuted = tag.startsWith("%");
+    const targetTagWord = isCurrentlyMuted ? tag.slice(1) : `%${tag}`;
+    const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const tagRegex = new RegExp(`#${escapedTag}(?![\\p{L}\\p{N}_\\-%])`, "gu");
+    let filesModified = 0;
+    const filesToProcess = [];
+    this.tagsByFile.forEach((tagsArr, filePath) => {
+      if (tagsArr.includes(tag)) {
+        filesToProcess.push(filePath);
+      }
+    });
+    new import_obsidian.Notice(`Globally replacing #${tag}...`);
+    for (const filePath of filesToProcess) {
+      const file = this.app.vault.getAbstractFileByPath(filePath);
+      if (file instanceof import_obsidian.TFile) {
+        await this.app.vault.process(file, (data) => {
+          const newData = data.replace(tagRegex, `#${targetTagWord}`);
+          if (data !== newData)
+            filesModified++;
+          return newData;
+        });
+      }
+    }
+    new import_obsidian.Notice(`Success: Replaced #${tag} with #${targetTagWord} in ${filesModified} file(s).`);
+    this.selectedTags.delete(tag);
+    this.excludedTags.delete(tag);
+    this.renderTags();
+    void this.updateSearch();
+  }
+  // ─────────────────────────────────────────────────────────────────────────────
   async getFilteredTagsAsync() {
     var _a, _b, _c;
     let filtered = /* @__PURE__ */ new Map();
@@ -633,6 +736,14 @@ var FlatTagView = class extends import_obsidian.ItemView {
       searchBox.value = "";
     this.tagSearchText = "";
     this.renderTags();
+  }
+  selectSingleTag(tag) {
+    this.selectedTags.clear();
+    this.excludedTags.clear();
+    const cleanTag = tag.replace(/^#/, "");
+    this.selectedTags.add(cleanTag);
+    this.renderTags();
+    void this.updateSearch({ revealSearch: true, createIfMissing: true });
   }
 };
 
@@ -1044,28 +1155,61 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
     this.addCommand({
       id: "cycle-flat-tag-placement",
       name: "Cycle Tag Placement (SOL / INP / EOL)",
+      callback: () => void this.cycleTagPlacement()
+    });
+    this.addCommand({
+      id: "set-flat-tag-placement-sol",
+      name: "Set Tag Placement to Start of Line (SOL)",
       callback: async () => {
-        const modes = ["start-line", "in-place", "end-line"];
-        const current = this.settings.altClickTagMode;
-        const next = modes[(modes.indexOf(current) + 1) % modes.length];
-        this.settings.altClickTagMode = next;
+        this.settings.altClickTagMode = "start-line";
         await this.saveSettings();
-        const labels = {
-          "start-line": "Start of line",
-          "in-place": "In place",
-          "end-line": "End of line"
-        };
-        new import_obsidian3.Notice(`Tag placement: ${labels[next]}`);
+        new import_obsidian3.Notice("Tag placement: Start of line");
+      }
+    });
+    this.addCommand({
+      id: "set-flat-tag-placement-inp",
+      name: "Set Tag Placement to In Place (INP)",
+      callback: async () => {
+        this.settings.altClickTagMode = "in-place";
+        await this.saveSettings();
+        new import_obsidian3.Notice("Tag placement: In place");
+      }
+    });
+    this.addCommand({
+      id: "set-flat-tag-placement-eol",
+      name: "Set Tag Placement to End of Line (EOL)",
+      callback: async () => {
+        this.settings.altClickTagMode = "end-line";
+        await this.saveSettings();
+        new import_obsidian3.Notice("Tag placement: End of line");
       }
     });
     this.addStyle();
     this.statusBarEl = this.addStatusBarItem();
     this.updateStatusBar();
+    this.statusBarEl.addClass("mod-clickable");
+    this.statusBarEl.addEventListener("click", () => void this.cycleTagPlacement());
     this.registerDomEvent(document, "click", (evt) => {
       if (!evt.altKey)
         return;
-      void this.handleEditorTrigger({ kind: "alt-click", mouseEvent: evt });
-    });
+      if (evt.shiftKey && (evt.ctrlKey || evt.metaKey)) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        void this.handleEditorTrigger({ kind: "local-mute", mouseEvent: evt });
+        return;
+      }
+      if (!evt.shiftKey && (evt.ctrlKey || evt.metaKey)) {
+        evt.preventDefault();
+        evt.stopPropagation();
+        void this.handleEditorTrigger({ kind: "drill-down", mouseEvent: evt });
+        return;
+      }
+      if (!evt.shiftKey && !evt.ctrlKey && !evt.metaKey) {
+        evt.preventDefault();
+        void this.handleEditorTrigger({ kind: "alt-click", mouseEvent: evt });
+        return;
+      }
+    }, { capture: true });
     this.registerMobileLongPress();
   }
   onunload() {
@@ -1075,7 +1219,20 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
       this.statusBarEl = null;
     }
   }
-  // ── Status bar ──────────────────────────────────────────────────────────────ok
+  async cycleTagPlacement() {
+    const modes = ["start-line", "in-place", "end-line"];
+    const current = this.settings.altClickTagMode;
+    const next = modes[(modes.indexOf(current) + 1) % modes.length];
+    this.settings.altClickTagMode = next;
+    await this.saveSettings();
+    const labels = {
+      "start-line": "Start of line",
+      "in-place": "In place",
+      "end-line": "End of line"
+    };
+    new import_obsidian3.Notice(`Tag placement: ${labels[next]}`);
+  }
+  // ── Status bar ──────────────────────────────────────────────────────────────
   updateStatusBar() {
     var _a, _b;
     if (!this.statusBarEl)
@@ -1083,7 +1240,7 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
     const show = (_a = this.settings.showPlacementInStatusBar) != null ? _a : true;
     if (!show) {
       this.statusBarEl.setText("");
-      this.statusBarEl.hide();
+      this.statusBarEl.style.display = "none";
       return;
     }
     const labels = {
@@ -1093,7 +1250,7 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
     };
     const modeLabel = (_b = labels[this.settings.altClickTagMode]) != null ? _b : "SOL";
     this.statusBarEl.setText(`#>${modeLabel}`);
-    this.statusBarEl.show();
+    this.statusBarEl.style.display = "";
   }
   // ── Mobile long press ────────────────────────────────────────────────────────
   registerMobileLongPress() {
@@ -1192,10 +1349,40 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
     const candidate = this.getCandidateWithRange(editor, { preferSelection: import_obsidian3.Platform.isMobile });
     if (!candidate)
       return;
-    if (candidate.raw.startsWith("#")) {
-      await this.removeTag(editor, candidate);
-    } else {
-      await this.createTag(editor, this.settings.altClickTagMode, candidate);
+    if (trigger.kind === "drill-down") {
+      if (candidate.raw.startsWith("#")) {
+        await this.activateView();
+        setTimeout(() => {
+          const ftvLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+          if (ftvLeaf && ftvLeaf.view instanceof FlatTagView) {
+            ftvLeaf.view.selectSingleTag(candidate.raw);
+          }
+        }, 50);
+      }
+      return;
+    }
+    if (trigger.kind === "local-mute") {
+      if (candidate.raw.startsWith("#") && candidate.range) {
+        const currentTag = candidate.raw;
+        let newTag = "";
+        if (currentTag.startsWith("#%")) {
+          newTag = "#" + currentTag.slice(2);
+        } else {
+          newTag = "#%" + currentTag.slice(1);
+        }
+        editor.replaceRange(newTag, candidate.range.from, candidate.range.to);
+      }
+      return;
+    }
+    if (trigger.kind === "alt-click" || trigger.kind === "mobile-long-press") {
+      if (candidate.raw.startsWith("#%")) {
+        return;
+      }
+      if (candidate.raw.startsWith("#")) {
+        await this.removeTag(editor, candidate);
+      } else {
+        await this.createTag(editor, this.settings.altClickTagMode, candidate);
+      }
     }
   }
   // ── Candidate resolution ─────────────────────────────────────────────────────
@@ -1247,7 +1434,7 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
     const lineText = (_a = editor.getLine(cursor.line)) != null ? _a : "";
     if (!lineText)
       return null;
-    const isBodyChar = (ch) => /[\p{L}\p{N}_-]/u.test(ch);
+    const isBodyChar = (ch) => /[\p{L}\p{N}_\-%]/u.test(ch);
     let i = cursor.ch;
     if (i >= lineText.length)
       i = lineText.length - 1;
@@ -1274,7 +1461,7 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
     return null;
   }
   wordRangeAt(line, lineText, i) {
-    const isBodyChar = (ch) => /[\p{L}\p{N}_-]/u.test(ch);
+    const isBodyChar = (ch) => /[\p{L}\p{N}_\-%]/u.test(ch);
     let start = i;
     while (start > 0 && isBodyChar(lineText.charAt(start - 1)))
       start--;
@@ -1298,7 +1485,7 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
     const body = s.startsWith("#") ? s.slice(1) : s;
     if (body.includes("#"))
       return true;
-    return /[!@$%^&*()+= <>,./?`~]/.test(body);
+    return /[!@$^&*()+= <>,./?`~]/.test(body);
   }
   normalizeCandidate(raw) {
     let t = raw.trim();
@@ -1310,7 +1497,7 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
       t = t.slice(1);
     if (!t)
       return null;
-    if (/^\d+$/.test(t))
+    if (/^\d+$/.test(t) || t === "%")
       return null;
     if (/\s/.test(t))
       return null;
@@ -1427,30 +1614,49 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
     const lead = this.parseLeadingTags(lineText);
     const split = this.splitBlockIdSuffix(lineText);
     const trail = this.parseTrailingTags(split.core);
-    const leadStart = lead.indent.length;
-    const leadEnd = leadStart + lead.tagBlock.length;
+    const leadStart = 0;
+    const leadEnd = lead.indent.length + lead.tagBlock.length;
     const trailStart = trail.before.length;
     const trailEnd = split.core.length;
     const inLeading = ch >= leadStart && ch < leadEnd;
     const inTrailing = ch >= trailStart && ch < trailEnd;
-    const leadHas = lead.tags.some((t) => t.replace(/^#/, "").toLowerCase() === key);
-    const trailHas = trail.tags.some((t) => t.replace(/^#/, "").toLowerCase() === key);
-    if (leadHas && (inLeading || !trailHas)) {
-      const kept = lead.tags.filter((t) => t.replace(/^#/, "").toLowerCase() !== key);
-      const newLine = this.buildLineWithLeading(lead.indent, kept, lead.after);
-      editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
-      return;
+    if (inLeading) {
+      const leadHas = lead.tags.some((t) => t.replace(/^#/, "").toLowerCase() === key);
+      if (leadHas) {
+        const kept = lead.tags.filter((t) => t.replace(/^#/, "").toLowerCase() !== key);
+        const newLine = this.buildLineWithLeading(lead.indent, kept, lead.after);
+        editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+        return;
+      }
     }
-    if (trailHas && (inTrailing || !leadHas)) {
-      const kept = trail.tags.filter((t) => t.replace(/^#/, "").toLowerCase() !== key);
-      const newLine = this.buildLineWithTrailing(trail.before, kept, split.blockId, split.trailingWs);
-      editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
-      return;
+    if (inTrailing) {
+      const trailHas = trail.tags.some((t) => t.replace(/^#/, "").toLowerCase() === key);
+      if (trailHas) {
+        const kept = trail.tags.filter((t) => t.replace(/^#/, "").toLowerCase() !== key);
+        const newLine = this.buildLineWithTrailing(trail.before, kept, split.blockId, split.trailingWs);
+        editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+        return;
+      }
     }
     if (candidate.range) {
+      const fromCh = candidate.range.from.ch;
+      const toCh = candidate.range.to.ch;
       const selected = editor.getRange(candidate.range.from, candidate.range.to);
       if (selected && selected.startsWith("#")) {
-        editor.replaceRange(selected.slice(1), candidate.range.from, candidate.range.to);
+        const beforeTag = lineText.slice(0, fromCh);
+        const afterTag = lineText.slice(toCh);
+        if (beforeTag.endsWith("[") && afterTag.startsWith(`](${selected})`)) {
+          let expandedFrom = fromCh - 1;
+          let expandedTo = toCh + 3 + selected.length;
+          if (expandedTo < lineText.length && lineText.charAt(expandedTo) === " ") {
+            expandedTo++;
+          } else if (expandedFrom > 0 && lineText.charAt(expandedFrom - 1) === " ") {
+            expandedFrom--;
+          }
+          editor.replaceRange("", { line, ch: expandedFrom }, { line, ch: expandedTo });
+        } else {
+          editor.replaceRange(selected.slice(1), candidate.range.from, candidate.range.to);
+        }
       }
     }
   }
@@ -1467,7 +1673,6 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
       altClickTagMode: mode === "start-line" || mode === "in-place" || mode === "end-line" ? mode : DEFAULT_SETTINGS.altClickTagMode,
       mobileLongPressEnabled: typeof anyLoaded.mobileLongPressEnabled === "boolean" ? anyLoaded.mobileLongPressEnabled : DEFAULT_SETTINGS.mobileLongPressEnabled,
       mobileLongPressMs: typeof anyLoaded.mobileLongPressMs === "number" && !isNaN(anyLoaded.mobileLongPressMs) ? Math.max(250, Math.min(5e3, Math.floor(anyLoaded.mobileLongPressMs))) : DEFAULT_SETTINGS.mobileLongPressMs,
-      // NEW: persisted status-bar toggle
       showPlacementInStatusBar: typeof anyLoaded.showPlacementInStatusBar === "boolean" ? anyLoaded.showPlacementInStatusBar : DEFAULT_SETTINGS.showPlacementInStatusBar
     };
     await this.saveData(this.settings);

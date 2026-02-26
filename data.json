@@ -1,6 +1,6 @@
 {
   "pinnedTags": [],
-  "frequencyCutoff": 0,
+  "frequencyCutoff": 4,
   "frequencyCutoffEnabled": false,
   "altClickTagMode": "end-line",
   "mobileLongPressEnabled": true,

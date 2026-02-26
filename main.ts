@@ -73,34 +73,75 @@ export default class FlatTagPlugin extends Plugin {
         this.addCommand({
             id: "cycle-flat-tag-placement",
             name: "Cycle Tag Placement (SOL / INP / EOL)",
+            callback: () => void this.cycleTagPlacement(),
+        });
+
+        this.addCommand({
+            id: "set-flat-tag-placement-sol",
+            name: "Set Tag Placement to Start of Line (SOL)",
             callback: async () => {
-                const modes: AltClickTagMode[] = ["start-line", "in-place", "end-line"];
-                const current = this.settings.altClickTagMode;
-                const next = modes[(modes.indexOf(current) + 1) % modes.length];
-
-                this.settings.altClickTagMode = next;
+                this.settings.altClickTagMode = "start-line";
                 await this.saveSettings();
-
-                const labels: Record<AltClickTagMode, string> = {
-                    "start-line": "Start of line",
-                    "in-place": "In place",
-                    "end-line": "End of line",
-                };
-                new Notice(`Tag placement: ${labels[next]}`);
+                new Notice("Tag placement: Start of line");
             },
         });
+
+        this.addCommand({
+            id: "set-flat-tag-placement-inp",
+            name: "Set Tag Placement to In Place (INP)",
+            callback: async () => {
+                this.settings.altClickTagMode = "in-place";
+                await this.saveSettings();
+                new Notice("Tag placement: In place");
+            },
+        });
+
+        this.addCommand({
+            id: "set-flat-tag-placement-eol",
+            name: "Set Tag Placement to End of Line (EOL)",
+            callback: async () => {
+                this.settings.altClickTagMode = "end-line";
+                await this.saveSettings();
+                new Notice("Tag placement: End of line");
+            },
+        });
+
 
         this.addStyle();
 
         // Status bar placement indicator
         this.statusBarEl = this.addStatusBarItem();
         this.updateStatusBar();
-
-        // Desktop: Alt-click in editor
+        this.statusBarEl.addClass("mod-clickable");
+        this.statusBarEl.addEventListener("click", () => void this.cycleTagPlacement());
+        
+        // Desktop: Intercept editor clicks with capture to prevent Obsidian hijacking them
         this.registerDomEvent(document, "click", (evt: MouseEvent) => {
             if (!evt.altKey) return;
-            void this.handleEditorTrigger({ kind: "alt-click", mouseEvent: evt });
-        });
+
+            // 1. Ctrl + Alt + Shift + Click -> Local Mute / Unmute tag
+            if (evt.shiftKey && (evt.ctrlKey || evt.metaKey)) {
+                evt.preventDefault();
+                evt.stopPropagation();
+                void this.handleEditorTrigger({ kind: "local-mute", mouseEvent: evt });
+                return;
+            }
+
+            // 2. Ctrl + Alt + Click -> FTV Drill Down
+            if (!evt.shiftKey && (evt.ctrlKey || evt.metaKey)) {
+                evt.preventDefault();
+                evt.stopPropagation();
+                void this.handleEditorTrigger({ kind: "drill-down", mouseEvent: evt });
+                return;
+            }
+
+            // 3. Alt + Click (only Alt) -> Create/Remove tag
+            if (!evt.shiftKey && !evt.ctrlKey && !evt.metaKey) {
+                evt.preventDefault(); 
+                void this.handleEditorTrigger({ kind: "alt-click", mouseEvent: evt });
+                return;
+            }
+        }, { capture: true });
 
         // Mobile: long press
         this.registerMobileLongPress();
@@ -114,34 +155,45 @@ export default class FlatTagPlugin extends Plugin {
         }
     }
 
-    // ── Status bar ──────────────────────────────────────────────────────────────ok
+    public async cycleTagPlacement() {
+        const modes: AltClickTagMode[] = ["start-line", "in-place", "end-line"];
+        const current = this.settings.altClickTagMode;
+        const next = modes[(modes.indexOf(current) + 1) % modes.length];
+
+        this.settings.altClickTagMode = next;
+        await this.saveSettings();
+
+        const labels: Record<AltClickTagMode, string> = {
+            "start-line": "Start of line",
+            "in-place": "In place",
+            "end-line": "End of line",
+        };
+        new Notice(`Tag placement: ${labels[next]}`);
+    }
+
+    // ── Status bar ──────────────────────────────────────────────────────────────
 
     updateStatusBar() {
         if (!this.statusBarEl) return;
 
-        // No "as any" cast needed anymore!
-        // We default to true if the setting is undefined (backward compatibility)
         const show = this.settings.showPlacementInStatusBar ?? true;
 
         if (!show) {
             this.statusBarEl.setText("");
-            this.statusBarEl.hide();
+            this.statusBarEl.style.display = "none";
             return;
         }
 
         const labels: Record<AltClickTagMode, string> = {
             "start-line": "SOL",
-            "in-place":   "INP",
-            "end-line":   "EOL",
+            "in-place": "INP",
+            "end-line": "EOL",
         };
-        
-        // Safety check in case mode is somehow undefined
-        const modeLabel = labels[this.settings.altClickTagMode] ?? "SOL";
-        
-        this.statusBarEl.setText(`#>${modeLabel}`);
-        this.statusBarEl.show();
-    }
 
+        const modeLabel = labels[this.settings.altClickTagMode] ?? "SOL";
+        this.statusBarEl.setText(`#>${modeLabel}`);
+        this.statusBarEl.style.display = "";
+    }
 
     // ── Mobile long press ────────────────────────────────────────────────────────
 
@@ -219,7 +271,7 @@ export default class FlatTagPlugin extends Plugin {
     // ── Trigger entry-point ──────────────────────────────────────────────────────
 
     private async handleEditorTrigger(
-        trigger: { kind: "alt-click"; mouseEvent: MouseEvent } | { kind: "mobile-long-press" }
+        trigger: { kind: "alt-click" | "drill-down" | "local-mute"; mouseEvent?: MouseEvent } | { kind: "mobile-long-press" }
     ) {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (!view) return;
@@ -240,13 +292,49 @@ export default class FlatTagPlugin extends Plugin {
         const candidate = this.getCandidateWithRange(editor, { preferSelection: Platform.isMobile });
         if (!candidate) return;
 
-        // AUTO-DETECT:
-        // Candidate starts with '#' => existing tag => remove.
-        // Plain word               => create tag (placement depends on altClickTagMode).
-        if (candidate.raw.startsWith("#")) {
-            await this.removeTag(editor, candidate);
-        } else {
-            await this.createTag(editor, this.settings.altClickTagMode, candidate);
+        // 1. Drill down action
+        if (trigger.kind === "drill-down") {
+            if (candidate.raw.startsWith("#")) {
+                await this.activateView();
+                setTimeout(() => {
+                    const ftvLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+                    if (ftvLeaf && ftvLeaf.view instanceof FlatTagView) {
+                        ftvLeaf.view.selectSingleTag(candidate.raw);
+                    }
+                }, 50);
+            }
+            return;
+        }
+
+        // 2. Local Mute action
+        if (trigger.kind === "local-mute") {
+            if (candidate.raw.startsWith("#") && candidate.range) {
+                const currentTag = candidate.raw;
+                let newTag = "";
+                
+                if (currentTag.startsWith("#%")) {
+                    newTag = "#" + currentTag.slice(2); // Remove %
+                } else {
+                    newTag = "#%" + currentTag.slice(1); // Add %
+                }
+                
+                editor.replaceRange(newTag, candidate.range.from, candidate.range.to);
+            }
+            return;
+        }
+
+        // 3. Alt-click (default create/remove)
+        if (trigger.kind === "alt-click" || trigger.kind === "mobile-long-press") {
+            // Completely ignore Alt-clicks on muted tags
+            if (candidate.raw.startsWith("#%")) {
+                return;
+            }
+
+            if (candidate.raw.startsWith("#")) {
+                await this.removeTag(editor, candidate);
+            } else {
+                await this.createTag(editor, this.settings.altClickTagMode, candidate);
+            }
         }
     }
 
@@ -301,7 +389,7 @@ export default class FlatTagPlugin extends Plugin {
         const lineText = editor.getLine(cursor.line) ?? "";
         if (!lineText) return null;
 
-        const isBodyChar = (ch: string) => /[\p{L}\p{N}_-]/u.test(ch);
+        const isBodyChar = (ch: string) => /[\p{L}\p{N}_\-%]/u.test(ch);
 
         let i = cursor.ch;
         if (i >= lineText.length) i = lineText.length - 1;
@@ -334,7 +422,7 @@ export default class FlatTagPlugin extends Plugin {
     }
 
     private wordRangeAt(line: number, lineText: string, i: number): Candidate | null {
-        const isBodyChar = (ch: string) => /[\p{L}\p{N}_-]/u.test(ch);
+        const isBodyChar = (ch: string) => /[\p{L}\p{N}_\-%]/u.test(ch);
 
         let start = i;
         while (start > 0 && isBodyChar(lineText.charAt(start - 1))) start--;
@@ -362,7 +450,7 @@ export default class FlatTagPlugin extends Plugin {
         const body = s.startsWith("#") ? s.slice(1) : s;
         if (body.includes("#")) return true;
 
-        return /[!@$%^&*()+= <>,./?`~]/.test(body);
+        return /[!@$^&*()+= <>,./?`~]/.test(body);
     }
 
     private normalizeCandidate(raw: string): string | null {
@@ -373,7 +461,7 @@ export default class FlatTagPlugin extends Plugin {
         if (t.startsWith("#")) t = t.slice(1);
         if (!t) return null;
 
-        if (/^\d+$/.test(t)) return null;
+        if (/^\d+$/.test(t) || t === "%") return null;
         if (/\s/.test(t)) return null;
 
         return t;
@@ -501,36 +589,62 @@ export default class FlatTagPlugin extends Plugin {
         const split = this.splitBlockIdSuffix(lineText);
         const trail = this.parseTrailingTags(split.core);
 
-        const leadStart = lead.indent.length;
-        const leadEnd = leadStart + lead.tagBlock.length;
+        const leadStart = 0;
+        const leadEnd = lead.indent.length + lead.tagBlock.length;
         const trailStart = trail.before.length;
         const trailEnd = split.core.length;
 
         const inLeading = ch >= leadStart && ch < leadEnd;
         const inTrailing = ch >= trailStart && ch < trailEnd;
 
-        const leadHas = lead.tags.some(t => t.replace(/^#/, "").toLowerCase() === key);
-        const trailHas = trail.tags.some(t => t.replace(/^#/, "").toLowerCase() === key);
-
-        if (leadHas && (inLeading || !trailHas)) {
-            const kept = lead.tags.filter(t => t.replace(/^#/, "").toLowerCase() !== key);
-            const newLine = this.buildLineWithLeading(lead.indent, kept, lead.after);
-            editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
-            return;
+        // 1. Remove from leading block ONLY if clicked inside it
+        if (inLeading) {
+            const leadHas = lead.tags.some(t => t.replace(/^#/, "").toLowerCase() === key);
+            if (leadHas) {
+                const kept = lead.tags.filter(t => t.replace(/^#/, "").toLowerCase() !== key);
+                const newLine = this.buildLineWithLeading(lead.indent, kept, lead.after);
+                editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+                return;
+            }
         }
 
-        if (trailHas && (inTrailing || !leadHas)) {
-            const kept = trail.tags.filter(t => t.replace(/^#/, "").toLowerCase() !== key);
-            const newLine = this.buildLineWithTrailing(trail.before, kept, split.blockId, split.trailingWs);
-            editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
-            return;
+        // 2. Remove from trailing block ONLY if clicked inside it
+        if (inTrailing) {
+            const trailHas = trail.tags.some(t => t.replace(/^#/, "").toLowerCase() === key);
+            if (trailHas) {
+                const kept = trail.tags.filter(t => t.replace(/^#/, "").toLowerCase() !== key);
+                const newLine = this.buildLineWithTrailing(trail.before, kept, split.blockId, split.trailingWs);
+                editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+                return;
+            }
         }
 
-        // Inline tag: just strip the '#' prefix in place.
+        // 3. Inline tag or markdown-link tag removal
         if (candidate.range) {
+            const fromCh = candidate.range.from.ch;
+            const toCh = candidate.range.to.ch;
             const selected = editor.getRange(candidate.range.from, candidate.range.to);
+
             if (selected && selected.startsWith("#")) {
-                editor.replaceRange(selected.slice(1), candidate.range.from, candidate.range.to);
+                const beforeTag = lineText.slice(0, fromCh);
+                const afterTag = lineText.slice(toCh);
+
+                // Edge case: User wants to remove a tag formatted as a markdown link `[#tag](#tag)`
+                if (beforeTag.endsWith("[") && afterTag.startsWith(`](${selected})`)) {
+                    let expandedFrom = fromCh - 1;
+                    let expandedTo = toCh + 3 + selected.length; // length of `](` + tag + `)`
+                    
+                    if (expandedTo < lineText.length && lineText.charAt(expandedTo) === ' ') {
+                        expandedTo++;
+                    } else if (expandedFrom > 0 && lineText.charAt(expandedFrom - 1) === ' ') {
+                        expandedFrom--;
+                    }
+                    
+                    editor.replaceRange("", { line, ch: expandedFrom }, { line, ch: expandedTo });
+                } else {
+                    // Standard inline tag: strip the '#'
+                    editor.replaceRange(selected.slice(1), candidate.range.from, candidate.range.to);
+                }
             }
         }
     }
@@ -568,10 +682,9 @@ export default class FlatTagPlugin extends Plugin {
                 ? Math.max(250, Math.min(5000, Math.floor(anyLoaded.mobileLongPressMs)))
                 : DEFAULT_SETTINGS.mobileLongPressMs,
 
-            // NEW: persisted status-bar toggle
-            showPlacementInStatusBar: typeof (anyLoaded as any).showPlacementInStatusBar === "boolean"
-                ? ((anyLoaded as any).showPlacementInStatusBar as boolean)
-                : (DEFAULT_SETTINGS as any).showPlacementInStatusBar,
+            showPlacementInStatusBar: typeof anyLoaded.showPlacementInStatusBar === "boolean"
+                ? anyLoaded.showPlacementInStatusBar
+                : DEFAULT_SETTINGS.showPlacementInStatusBar,
         } as FlatTagPluginSettings;
 
         // Persist immediately to drop stale keys and backfill new defaults

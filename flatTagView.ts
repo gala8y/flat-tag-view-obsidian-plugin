@@ -1,9 +1,62 @@
-import { ItemView, Platform, setIcon, TFile, WorkspaceLeaf } from "obsidian";
+import { ItemView, Platform, setIcon, TFile, WorkspaceLeaf, Notice, Modal, App, Setting, ButtonComponent, Menu } from "obsidian";
 import { VIEW_TYPE } from "./constants";
 import FlatTagPlugin from "./main";
 
 type SortMode = "az" | "count";
 type SearchMode = "note" | "line" | "task" | "task-todo" | "task-done";
+
+// ── Global Mute Confirmation Modal ───────────────────────────────────────
+class GlobalMuteConfirmModal extends Modal {
+	tagToMute: string;
+	onConfirm: () => void;
+
+	constructor(app: App, tagToMute: string, onConfirm: () => void) {
+		super(app);
+		this.tagToMute = tagToMute;
+		this.onConfirm = onConfirm;
+	}
+
+	onOpen() {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl("h2", { text: "Global Mute Tag" });
+		
+		const isCurrentlyMuted = this.tagToMute.startsWith("%");
+		const targetState = isCurrentlyMuted ? "UN-MUTE" : "MUTE";
+		const resultingTag = isCurrentlyMuted 
+			? `#${this.tagToMute.slice(1)}` 
+			: `#%${this.tagToMute}`;
+
+		contentEl.createEl("p", { 
+			text: `Are you sure you want to globally ${targetState} the tag #${this.tagToMute}?`
+		});
+		contentEl.createEl("p", { 
+			text: `This will search your entire vault and change every instance to ${resultingTag}. This action modifies your files and cannot be easily undone.` 
+		});
+
+		new Setting(contentEl)
+			.addButton((btn: ButtonComponent) =>
+				btn
+					.setButtonText("Cancel")
+					.onClick(() => this.close())
+			)
+			.addButton((btn: ButtonComponent) =>
+				btn
+					.setButtonText(`Yes, ${targetState} Globally`)
+					.setCta()
+					.onClick(() => {
+						this.onConfirm();
+						this.close();
+					})
+			);
+	}
+
+	onClose() {
+		const { contentEl } = this;
+		contentEl.empty();
+	}
+}
+// ─────────────────────────────────────────────────────────────────────────────
 
 export class FlatTagView extends ItemView {
 	public plugin: FlatTagPlugin;
@@ -102,8 +155,28 @@ export class FlatTagView extends ItemView {
 			}
 		});
 
-		this.sortAzBtn.addEventListener("click", () => { this.currentSort = "az"; this.updateModeUI(true); });
-		this.sortCountBtn.addEventListener("click", () => { this.currentSort = "count"; this.updateModeUI(true); });
+		this.sortAzBtn.addEventListener("click", () => {
+			if (this.currentSort === "az") {
+				const vaultName = this.app.vault.getName();
+				const count = Object.keys(this.app.metadataCache.getTags()).length;
+				new Notice(`'${vaultName}': ${count} unique tags`);
+			} else {
+				this.currentSort = "az";
+				this.updateModeUI(true);
+			}
+		});
+
+		this.sortCountBtn.addEventListener("click", () => {
+			if (this.currentSort === "count") {
+				const vaultName = this.app.vault.getName();
+				const count = Object.keys(this.app.metadataCache.getTags()).length;
+				new Notice(`'${vaultName}': ${count} unique tags`);
+			} else {
+				this.currentSort = "count";
+				this.updateModeUI(true);
+			}
+		});
+
 		this.scopeBtn.addEventListener("click", () => this.toggleScopeMode());
 		this.taskBtn.addEventListener("click", () => this.toggleTaskMode());
 
@@ -231,23 +304,32 @@ export class FlatTagView extends ItemView {
 		let sortedTags = Array.from(normal.entries());
 
 		if (this.currentSort === "az") {
-			// 1. Sort properly using Polish locale. 
-			// localeCompare naturally places digits and symbols BEFORE letters.
-			sortedTags.sort((a, b) => a[0].localeCompare(b[0], "pl"));
+			// True universal sorting (Ą after A, Ć after C)
+			const collator = new Intl.Collator("pl", { numeric: true, sensitivity: "base" });
+			
+			// Custom sort function that forces emojis, numbers, and symbols to the absolute top
+			sortedTags.sort((a, b) => {
+				const charA = Array.from(a[0])[0] || "";
+				const charB = Array.from(b[0])[0] || "";
+				const isLetterA = /^\p{L}$/u.test(charA);
+				const isLetterB = /^\p{L}$/u.test(charB);
+
+				// If one is not a letter and the other is, the non-letter wins (goes to top)
+				if (!isLetterA && isLetterB) return -1;
+				if (isLetterA && !isLetterB) return 1;
+				
+				// Otherwise, use native Polish sorting
+				return collator.compare(a[0], b[0]);
+			});
 
 			let currentHeader = "";
 
 			for (const [tag, count] of sortedTags) {
-				// Array.from() safely grabs the first character, even if it's a complex Emoji
 				const firstChar = (Array.from(tag)[0] || "").toUpperCase();
-				
-				// \p{L} matches ANY letter in any language. 
-				// If it's a number, punctuation, or emoji, this returns false.
 				const isLetter = /^\p{L}$/u.test(firstChar);
 				
 				const headerToUse = isLetter ? firstChar : "OTHER";
 
-				// If we encounter a new starting letter, print a new category header
 				if (headerToUse !== currentHeader) {
 					currentHeader = headerToUse;
 					if (currentHeader !== "OTHER") {
@@ -256,7 +338,6 @@ export class FlatTagView extends ItemView {
 					}
 				}
 
-				// Render the tag itself
 				this.createTagElement(tag, count, this.tagContainer);
 			}
 		} else {
@@ -305,9 +386,6 @@ export class FlatTagView extends ItemView {
 				}
 			}
 
-			// ── Optimistic immediate visual update ────────────────────────────────
-			// renderTags() is async; update this element's class right now so the
-			// colour change is instant, without waiting for the full re-render.
 			if (this.selectedTags.has(tag)) {
 				tagEl.addClass("flat-tag-selected");
 				tagEl.removeClass("flat-tag-excluded");
@@ -318,28 +396,19 @@ export class FlatTagView extends ItemView {
 				tagEl.removeClass("flat-tag-selected");
 				tagEl.removeClass("flat-tag-excluded");
 			}
-			// ─────────────────────────────────────────────────────────────────────
 
 			this.renderTags();
 			void this.updateSearch();
 		};
 
-		// ── Per-element touch-handled flag ────────────────────────────────────────
-		// On mobile the browser synthesises a `click` event ~300ms after touchend.
-		// Since touchend is passive we cannot call preventDefault(). Instead we set
-		// this flag whenever a touch interaction has already been handled, and the
-		// click listener bails out when it sees it set.
-		// ─────────────────────────────────────────────────────────────────────────
 		let touchHandled = false;
-
-		// Per-element touch state (all in closure — no shared class fields needed)
 		let touchStartX = 0;
 		let touchStartY = 0;
 		let isSwiping = false;
 		let longPressTriggered = false;
 
+		// Standard Left Click (Filter / Pin)
 		tagEl.addEventListener("click", (e) => {
-			// Skip the synthetic click that follows a touch interaction.
 			if (touchHandled) {
 				touchHandled = false;
 				return;
@@ -347,6 +416,30 @@ export class FlatTagView extends ItemView {
 			e.preventDefault();
 			void handleTagInteraction(!!(e.ctrlKey || e.metaKey), !!e.shiftKey, !!e.altKey);
 		});
+
+		// ── Reliable Right-Click for Global Mute ────────────────────────────────────
+		tagEl.addEventListener("contextmenu", (e) => {
+			e.preventDefault();
+			
+			const menu = new Menu();
+			const isMuted = tag.startsWith("%");
+			const actionName = isMuted ? "Global Un-Mute" : "Global Mute";
+			const targetTag = isMuted ? tag.slice(1) : `%${tag}`;
+			
+			menu.addItem((item) => {
+				item
+					.setTitle(`${actionName} to #${targetTag}`)
+					.setIcon("alert-triangle")
+					.onClick(() => {
+						new GlobalMuteConfirmModal(this.app, tag, async () => {
+							await this.executeGlobalMute(tag);
+						}).open();
+					});
+			});
+			
+			menu.showAtMouseEvent(e);
+		});
+		// ─────────────────────────────────────────────────────────────────────────────
 
 		tagEl.addEventListener("touchstart", (e) => {
 			const touch = e.touches[0];
@@ -361,7 +454,7 @@ export class FlatTagView extends ItemView {
 				this.touchTimer = null;
 				if (!isSwiping) {
 					longPressTriggered = true;
-					touchHandled = true; // suppress the upcoming synthetic click
+					touchHandled = true; 
 					void handleTagInteraction(true, false, false);
 				}
 			}, 500);
@@ -396,25 +489,22 @@ export class FlatTagView extends ItemView {
 			tagEl.style.opacity = "";
 			setTimeout(() => { tagEl.style.transition = ""; }, 220);
 
-			// Swipe handled
 			if (isSwiping) {
 				isSwiping = false;
-				touchHandled = true; // suppress synthetic click after swipe
+				touchHandled = true; 
 				if (dx <= -60) void handleTagInteraction(false, false, true);
 				return;
 			}
 
-			// Long press already fired — do nothing, click already suppressed
 			if (longPressTriggered) {
 				longPressTriggered = false;
 				return;
 			}
 
-			// Short tap — cancel timer and handle as single-select
 			if (this.touchTimer) {
 				window.clearTimeout(this.touchTimer);
 				this.touchTimer = null;
-				touchHandled = true; // suppress synthetic click after tap
+				touchHandled = true; 
 				void handleTagInteraction(false, false, false);
 			}
 		}, { passive: true });
@@ -430,6 +520,49 @@ export class FlatTagView extends ItemView {
 			setTimeout(() => { tagEl.style.transition = ""; }, 220);
 		}, { passive: true });
 	}
+
+	// ── Execute Global Mute logic ───────────────────────────────────────────
+	private async executeGlobalMute(tag: string) {
+		const isCurrentlyMuted = tag.startsWith("%");
+		
+		const targetTagWord = isCurrentlyMuted ? tag.slice(1) : `%${tag}`;
+		
+		// Create a regex to find the exact tag, respecting boundaries
+		// Handles tags with or without % prefix securely
+		const escapedTag = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+		const tagRegex = new RegExp(`#${escapedTag}(?![\\p{L}\\p{N}_\\-%])`, 'gu');
+
+		let filesModified = 0;
+		const filesToProcess: string[] = [];
+
+		this.tagsByFile.forEach((tagsArr, filePath) => {
+			if (tagsArr.includes(tag)) {
+				filesToProcess.push(filePath);
+			}
+		});
+
+		new Notice(`Globally replacing #${tag}...`);
+
+		for (const filePath of filesToProcess) {
+			const file = this.app.vault.getAbstractFileByPath(filePath);
+			if (file instanceof TFile) {
+				await this.app.vault.process(file, (data) => {
+					const newData = data.replace(tagRegex, `#${targetTagWord}`);
+					if (data !== newData) filesModified++;
+					return newData;
+				});
+			}
+		}
+
+		new Notice(`Success: Replaced #${tag} with #${targetTagWord} in ${filesModified} file(s).`);
+		
+		// Clear selection if we just muted it globally so UI doesn't look broken
+		this.selectedTags.delete(tag);
+		this.excludedTags.delete(tag);
+		this.renderTags();
+		void this.updateSearch();
+	}
+	// ─────────────────────────────────────────────────────────────────────────────
 
 	private async getFilteredTagsAsync(): Promise<Map<string, number>> {
 		let filtered = new Map<string, number>();
@@ -638,5 +771,16 @@ export class FlatTagView extends ItemView {
 		if (searchBox) searchBox.value = "";
 		this.tagSearchText = "";
 		this.renderTags();
+	}
+
+	public selectSingleTag(tag: string) {
+		this.selectedTags.clear();
+		this.excludedTags.clear();
+		
+		const cleanTag = tag.replace(/^#/, "");
+		this.selectedTags.add(cleanTag);
+		
+		this.renderTags();
+		void this.updateSearch({ revealSearch: true, createIfMissing: true });
 	}
 }

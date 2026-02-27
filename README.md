@@ -20,20 +20,20 @@ Displays tags in a flat, space-separated format with multi-select filtering, sor
 
 ### Filter Modes (Note / Line / Task)
 
-By default, selecting multiple tags in FTV works on a **Note-level** basis. clicking the `NOTE` and `TASK-ALL` buttons allows you to tighten the scope of your search to find tags that co-occur on the same line or within specific task types.
+By default, selecting multiple tags in FTV works on a **Note-level** basis. Clicking the `NOTE` and `TASK-ALL` buttons allows you to tighten the scope of your search to find tags that co-occur on the same line or within specific task types.
 
 | Mode | Behavior |
 |---|---|
 | **NOTE** (Standard) | Shows tags that co-occur anywhere within the same file. |
 | **LINE** | Strict mode. Only shows tags that co-occur on the exact same line of text. |
-| **TASK-ALL** | Only shows tags that co-occur on a line formatted as a task (e.g., `- [ ]` or `- [x]`). |
+| **TASK-ALL** | Only shows tags that co-occur on a line formatted as a task |
 | **TASK-TODO** | Only shows tags that co-occur on an incomplete task line (`- [ ]`). |
 | **TASK-DONE** | Only shows tags that co-occur on a completed task line (`- [x]`). |
 
 
 _Important Notes on Task Modes_
 
-1. When you switch to `LINE` or `TASK` modes, the FTV pane will still display **all tags in your vault** until you actually click your first tag to begin filtering. Scanning every line of every file in the vault just to hide non-task tags from the initial view would be computationally expensive and cause significant lag. The strict line/task filtering kicks in *after* you make your first selection.
+1. When you switch to any of 'TASK` modes, the FTV pane will still display **all tags in your vault** until you actually click your first tag to begin filtering. Scanning every line of every file in the vault just to hide non-task tags from the initial view would be computationally expensive and cause significant lag. The strict line/task filtering kicks in *after* you make your first selection.
 
 2. If you have a #tag used 8 times in a note (once in text, plus 7 tasks marked with this #tag (two of which are done and five are to-do)), FTV will show:
     - #tag (1) in note mode

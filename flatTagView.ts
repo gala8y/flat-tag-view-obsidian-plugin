@@ -202,7 +202,9 @@ export class FlatTagView extends ItemView {
 		this.syncCutoffControlsFromSettings();
 		this.updateModeUI(true);
 
-		await this.loadTags();
+		this.app.workspace.onLayoutReady(async () => {
+			await this.loadTags();
+		});
 
 		this.registerEvent(this.app.metadataCache.on("changed", (file: TFile) => {
 			this.updateFileTags(file);
@@ -253,8 +255,6 @@ export class FlatTagView extends ItemView {
 		const oldSorted = [...oldTagsArr].sort().join(",");
 		const newSorted = [...newTagsArr].sort().join(",");
 		if (oldSorted === newSorted) {
-			// Even if file-level tags haven't changed, a task status or line content might have.
-			// If we are dynamically scanning lines/tasks and this file matches the current selection, re-render.
 			if (this.selectedTags.size > 0 && this.searchMode !== "note") {
 				const selectedArr = Array.from(this.selectedTags);
 				if (selectedArr.every(t => oldTagsArr.includes(t))) {
@@ -432,6 +432,11 @@ export class FlatTagView extends ItemView {
 
 		// ── Reliable Right-Click for Global Mute ────────────────────────────────────
 		tagEl.addEventListener("contextmenu", (e) => {
+			if (Platform.isMobile) {
+				e.preventDefault();
+				return;
+			}
+
 			e.preventDefault();
 			
 			const menu = new Menu();
@@ -517,8 +522,6 @@ export class FlatTagView extends ItemView {
 			if (this.touchTimer) {
 				window.clearTimeout(this.touchTimer);
 				this.touchTimer = null;
-				touchHandled = true; 
-				void handleTagInteraction(false, false, false);
 			}
 		}, { passive: true });
 
@@ -607,7 +610,7 @@ export class FlatTagView extends ItemView {
 						if (this.searchMode === "task-todo" && !lower.includes("- [ ]")) continue;
 						if (this.searchMode === "task-done" && !lower.includes("- [x"))  continue;
 						const lineTags = new Set<string>();
-						const tagRegex = /#([^\s#]+)/g;
+						const tagRegex = /#(?!%)([^\s#]+)/g;
 						let m: RegExpExecArray | null;
 						while ((m = tagRegex.exec(lower)) !== null) lineTags.add(m[1]);
 						const hasAll = selectedArr.every(sel =>
@@ -705,7 +708,6 @@ export class FlatTagView extends ItemView {
 
 		if (typeof searchView?.setQuery === "function") {
 			searchView.setQuery(query);
-			// If the search view is hydrating on first open, the immediate setQuery might be ignored.
 			setTimeout(() => searchView.setQuery(query), 150);
 		}
 	}

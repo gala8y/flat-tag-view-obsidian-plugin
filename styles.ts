@@ -279,5 +279,46 @@ export const getStyles = (): string => {
 .flat-tag-pinned {
 	border: 1px solid var(--interactive-accent);
 }
+
+
+/* Glow reminder when list is filtered:
+   input is not focused and not empty (placeholder not shown). */
+.flat-tag-search-input:not(:focus):not(:placeholder-shown) {
+  border-color: var(--interactive-accent);
+  box-shadow:
+    0 0 0 2px color-mix(in srgb, var(--interactive-accent) 35%, transparent),
+    0 0 14px color-mix(in srgb, var(--interactive-accent) 25%, transparent);
+  animation: ftv-search-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes ftv-search-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--interactive-accent) 28%, transparent),
+      0 0 10px color-mix(in srgb, var(--interactive-accent) 18%, transparent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 2px color-mix(in srgb, var(--interactive-accent) 45%, transparent),
+      0 0 18px color-mix(in srgb, var(--interactive-accent) 35%, transparent);
+  }
+}
+
+/* Theme tuning */
+body.theme-light .flat-tag-search-input:not(:focus):not(:placeholder-shown) {
+  animation-duration: 2.6s;
+}
+
+body.theme-dark .flat-tag-search-input:not(:focus):not(:placeholder-shown) {
+  animation-duration: 2.0s;
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .flat-tag-search-input:not(:focus):not(:placeholder-shown) {
+    animation: none;
+  }
+}
+
 `;
 };

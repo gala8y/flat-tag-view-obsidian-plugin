@@ -127,7 +127,15 @@ export default class FlatTagPlugin extends Plugin {
                 return;
             }
 
-            // 2. Ctrl + Alt + Click -> FTV Drill Down
+            // 1b. Shift + Alt + Click -> strip leading '#' but keep the expression text
+                if (evt.shiftKey && !evt.ctrlKey && !evt.metaKey) {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                    void this.handleEditorTrigger({ kind: "strip-hash", mouseEvent: evt });
+                    return;
+                }
+
+                // 2. Ctrl + Alt + Click -> FTV Drill Down
             if (!evt.shiftKey && (evt.ctrlKey || evt.metaKey)) {
                 evt.preventDefault();
                 evt.stopPropagation();
@@ -271,7 +279,7 @@ export default class FlatTagPlugin extends Plugin {
     // ── Trigger entry-point ──────────────────────────────────────────────────────
 
     private async handleEditorTrigger(
-        trigger: { kind: "alt-click" | "drill-down" | "local-mute"; mouseEvent?: MouseEvent } | { kind: "mobile-long-press" }
+        trigger: { kind: "alt-click" | "drill-down" | "local-mute" | "strip-hash"; mouseEvent?: MouseEvent } | { kind: "mobile-long-press" }
     ) {
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (!view) return;
@@ -294,7 +302,7 @@ export default class FlatTagPlugin extends Plugin {
 
         // 1. Drill down action
         if (trigger.kind === "drill-down") {
-            if (candidate.raw.startsWith("#")) {
+            if (candidate.raw.startsWith("#") && !candidate.raw.startsWith("#%")) {
                 await this.activateView();
                 setTimeout(() => {
                     const ftvLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
@@ -320,6 +328,15 @@ export default class FlatTagPlugin extends Plugin {
                 
                 editor.replaceRange(newTag, candidate.range.from, candidate.range.to);
             }
+            return;
+        }
+
+        // 2b. Strip-hash action (always leave expression text)
+        if (trigger.kind === "strip-hash") {
+            if (candidate.raw.startsWith("#%")) return;
+            if (!candidate.raw.startsWith("#")) return;
+
+            await this.stripHashFromTag(editor, candidate);
             return;
         }
 
@@ -389,7 +406,7 @@ export default class FlatTagPlugin extends Plugin {
         const lineText = editor.getLine(cursor.line) ?? "";
         if (!lineText) return null;
 
-        const isBodyChar = (ch: string) => /[\p{L}\p{N}_\-%]/u.test(ch);
+        const isBodyChar = (ch: string) => /[^\s"'`\]\[{}()=+\\|,<.>!?:;*&^@$#]/u.test(ch);
 
         let i = cursor.ch;
         if (i >= lineText.length) i = lineText.length - 1;
@@ -422,7 +439,7 @@ export default class FlatTagPlugin extends Plugin {
     }
 
     private wordRangeAt(line: number, lineText: string, i: number): Candidate | null {
-        const isBodyChar = (ch: string) => /[\p{L}\p{N}_\-%]/u.test(ch);
+        const isBodyChar = (ch: string) => /[^\s"'`\]\[{}()=+\\|,<.>!?:;*&^@$#]/u.test(ch);
 
         let start = i;
         while (start > 0 && isBodyChar(lineText.charAt(start - 1))) start--;
@@ -450,7 +467,7 @@ export default class FlatTagPlugin extends Plugin {
         const body = s.startsWith("#") ? s.slice(1) : s;
         if (body.includes("#")) return true;
 
-        return /[!@$^&*()+= <>,./?`~]/.test(body);
+        return /[!@$^&*()+= <>,.?`~]/.test(body);
     }
 
     private normalizeCandidate(raw: string): string | null {
@@ -570,6 +587,36 @@ export default class FlatTagPlugin extends Plugin {
         const next = this.sortTags([...trail.tags, tagToken]);
         const newLine = this.buildLineWithTrailing(trail.before, next, split.blockId, split.trailingWs);
         editor.replaceRange(newLine, { line, ch: 0 }, { line, ch: lineText.length });
+    }
+
+    private async stripHashFromTag(editor: Editor, candidate: Candidate) {
+        if (!candidate.range) return;
+
+        const line = candidate.range.from.line;
+        if (candidate.range.to.line !== line) return;
+
+        const lineText = editor.getLine(line);
+        const fromCh = candidate.range.from.ch;
+        const toCh = candidate.range.to.ch;
+
+        const selected = editor.getRange(candidate.range.from, candidate.range.to);
+        if (!selected || !selected.startsWith("#")) return;
+
+        const beforeTag = lineText.slice(0, fromCh);
+        const afterTag = lineText.slice(toCh);
+
+        if (beforeTag.endsWith("[") && afterTag.startsWith(`](${selected})`)) {
+            let expandedFrom = fromCh - 1; 
+            let expandedTo = toCh + 3 + selected.length; 
+
+            if (expandedTo < lineText.length && lineText.charAt(expandedTo) === " ") expandedTo++;
+            else if (expandedFrom > 0 && lineText.charAt(expandedFrom - 1) === " ") expandedFrom--;
+
+            editor.replaceRange(selected.slice(1), { line, ch: expandedFrom }, { line, ch: expandedTo });
+            return;
+        }
+
+        editor.replaceRange(selected.slice(1), candidate.range.from, candidate.range.to);
     }
 
     private async removeTag(editor: Editor, candidate: Candidate) {

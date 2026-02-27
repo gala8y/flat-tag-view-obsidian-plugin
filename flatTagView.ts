@@ -87,6 +87,7 @@ export class FlatTagView extends ItemView {
 
 	private touchTimer: number | null = null;
 	private lastInteractionWasTouch = false;
+	private renderId = 0;
 
 	constructor(leaf: WorkspaceLeaf, plugin: FlatTagPlugin) {
 		super(leaf);
@@ -201,12 +202,7 @@ export class FlatTagView extends ItemView {
 		this.syncCutoffControlsFromSettings();
 		this.updateModeUI(true);
 
-		// Wait for the workspace layout to be fully restored before loading tags
-		// and pushing the initial query to Search. Without this the Search leaf
-		// may not exist yet on startup, causing the first updateSearch() to fail silently.
-		this.app.workspace.onLayoutReady(async () => {
-			await this.loadTags();
-		});
+		await this.loadTags();
 
 		this.registerEvent(this.app.metadataCache.on("changed", (file: TFile) => {
 			this.updateFileTags(file);
@@ -256,7 +252,17 @@ export class FlatTagView extends ItemView {
 		const newTagsArr = this.getFileTags(file);
 		const oldSorted = [...oldTagsArr].sort().join(",");
 		const newSorted = [...newTagsArr].sort().join(",");
-		if (oldSorted === newSorted) return;
+		if (oldSorted === newSorted) {
+			// Even if file-level tags haven't changed, a task status or line content might have.
+			// If we are dynamically scanning lines/tasks and this file matches the current selection, re-render.
+			if (this.selectedTags.size > 0 && this.searchMode !== "note") {
+				const selectedArr = Array.from(this.selectedTags);
+				if (selectedArr.every(t => oldTagsArr.includes(t))) {
+					this.renderTags();
+				}
+			}
+			return;
+		}
 
 		oldTagsArr.forEach(tag => {
 			const count = (this.allTags.get(tag) || 0) - 1;
@@ -280,12 +286,14 @@ export class FlatTagView extends ItemView {
 	}
 
 	async renderTags() {
-		this.tagContainer.empty();
-
 		this.sortAzBtn.toggleClass("is-active", this.currentSort === "az");
 		this.sortCountBtn.toggleClass("is-active", this.currentSort === "count");
 
+		const currentRenderId = ++this.renderId;
 		const filteredTags = await this.getFilteredTagsAsync();
+		if (currentRenderId !== this.renderId) return;
+
+		this.tagContainer.empty();
 
 		const pinned = new Map<string, number>();
 		const normal = new Map<string, number>();
@@ -424,13 +432,6 @@ export class FlatTagView extends ItemView {
 
 		// ── Reliable Right-Click for Global Mute ────────────────────────────────────
 		tagEl.addEventListener("contextmenu", (e) => {
-			// On mobile the OS fires contextmenu on long-press.
-			// Suppress it so our touchstart timer can fire multi-select instead.
-			if (Platform.isMobile) {
-				e.preventDefault();
-				return;
-			}
-
 			e.preventDefault();
 			
 			const menu = new Menu();
@@ -513,13 +514,11 @@ export class FlatTagView extends ItemView {
 				return;
 			}
 
-			// Short tap: cancel the timer but do NOT call handleTagInteraction here.
-			// We delegate short taps entirely to the native `click` event, which is
-			// far more reliable on mobile (handles pane-focus on first tap, etc.).
-			// touchHandled stays false so the click event fires normally.
 			if (this.touchTimer) {
 				window.clearTimeout(this.touchTimer);
 				this.touchTimer = null;
+				touchHandled = true; 
+				void handleTagInteraction(false, false, false);
 			}
 		}, { passive: true });
 
@@ -704,7 +703,11 @@ export class FlatTagView extends ItemView {
 			query = `${prefix}${body})`;
 		}
 
-		if (typeof searchView?.setQuery === "function") searchView.setQuery(query);
+		if (typeof searchView?.setQuery === "function") {
+			searchView.setQuery(query);
+			// If the search view is hydrating on first open, the immediate setQuery might be ignored.
+			setTimeout(() => searchView.setQuery(query), 150);
+		}
 	}
 
 	getFileTags(file: TFile): string[] {

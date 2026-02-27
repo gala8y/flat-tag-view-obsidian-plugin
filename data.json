@@ -2,7 +2,7 @@
   "pinnedTags": [],
   "frequencyCutoff": 4,
   "frequencyCutoffEnabled": false,
-  "altClickTagMode": "end-line",
+  "altClickTagMode": "in-place",
   "mobileLongPressEnabled": true,
   "mobileLongPressMs": 1000,
   "showPlacementInStatusBar": true

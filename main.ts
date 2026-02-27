@@ -115,32 +115,69 @@ export default class FlatTagPlugin extends Plugin {
         this.statusBarEl.addClass("mod-clickable");
         this.statusBarEl.addEventListener("click", () => void this.cycleTagPlacement());
         
-        // Desktop: Intercept editor clicks with capture to prevent Obsidian hijacking them
+        // Desktop only: Intercept editor clicks with capture to prevent Obsidian hijacking them.
+        // All editor tag interaction is disabled on mobile — native touch behaviour is preserved.
+        if (!Platform.isMobile) {
+            this.registerDomEvent(document, "click", (evt: MouseEvent) => {
+                if (!evt.altKey) return;
+
+                // 1. Ctrl + Alt + Shift + Click -> Local Mute / Unmute tag
+                if (evt.shiftKey && (evt.ctrlKey || evt.metaKey)) {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                    void this.handleEditorTrigger({ kind: "local-mute", mouseEvent: evt });
+                    return;
+                }
+
+                // 2. Ctrl + Alt + Click -> FTV Drill Down
+                if (!evt.shiftKey && (evt.ctrlKey || evt.metaKey)) {
+                    evt.preventDefault();
+                    evt.stopPropagation();
+                    void this.handleEditorTrigger({ kind: "drill-down", mouseEvent: evt });
+                    return;
+                }
+
+                // 3. Alt + Click (only Alt) -> Create/Remove tag
+                if (!evt.shiftKey && !evt.ctrlKey && !evt.metaKey) {
+                    evt.preventDefault();
+                    void this.handleEditorTrigger({ kind: "alt-click", mouseEvent: evt });
+                    return;
+                }
+            }, { capture: true });
+        }
+
+        // Reading View: Ctrl/Cmd + Alt + Click on a rendered .tag element -> FTV Drill Down.
+        // Works in Reading Mode where Live Preview .cm-hashtag elements are absent.
+        // No write operations (create, mute, remove) are performed here.
         this.registerDomEvent(document, "click", (evt: MouseEvent) => {
             if (!evt.altKey) return;
+            if (!(evt.ctrlKey || evt.metaKey)) return;
+            if (evt.shiftKey) return; // Shift = local-mute, not wanted in reading view
 
-            // 1. Ctrl + Alt + Shift + Click -> Local Mute / Unmute tag
-            if (evt.shiftKey && (evt.ctrlKey || evt.metaKey)) {
-                evt.preventDefault();
-                evt.stopPropagation();
-                void this.handleEditorTrigger({ kind: "local-mute", mouseEvent: evt });
-                return;
-            }
+            const target = evt.target as HTMLElement;
+            if (!target.classList.contains("tag")) return;
 
-            // 2. Ctrl + Alt + Click -> FTV Drill Down
-            if (!evt.shiftKey && (evt.ctrlKey || evt.metaKey)) {
-                evt.preventDefault();
-                evt.stopPropagation();
-                void this.handleEditorTrigger({ kind: "drill-down", mouseEvent: evt });
-                return;
-            }
+            // Confirm we are in a Reading View pane, not the editor
+            const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (!activeView) return;
+            const anyView = activeView as any;
+            if (typeof anyView.getMode === "function" && anyView.getMode() !== "preview") return;
 
-            // 3. Alt + Click (only Alt) -> Create/Remove tag
-            if (!evt.shiftKey && !evt.ctrlKey && !evt.metaKey) {
-                evt.preventDefault(); 
-                void this.handleEditorTrigger({ kind: "alt-click", mouseEvent: evt });
-                return;
-            }
+            evt.preventDefault();
+            evt.stopPropagation();
+
+            // Extract tag text — Obsidian renders it as "#tagname", strip the hash
+            const raw = (target as any).getText?.() ?? target.innerText ?? "";
+            const tag = raw.startsWith("#") ? raw.slice(1).trim() : raw.trim();
+            if (!tag) return;
+
+            void this.activateView();
+            setTimeout(() => {
+                const ftvLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+                if (ftvLeaf && ftvLeaf.view instanceof FlatTagView) {
+                    ftvLeaf.view.selectSingleTag(tag);
+                }
+            }, 50);
         }, { capture: true });
 
         // Mobile: long press

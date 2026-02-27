@@ -201,7 +201,12 @@ export class FlatTagView extends ItemView {
 		this.syncCutoffControlsFromSettings();
 		this.updateModeUI(true);
 
-		await this.loadTags();
+		// Wait for the workspace layout to be fully restored before loading tags
+		// and pushing the initial query to Search. Without this the Search leaf
+		// may not exist yet on startup, causing the first updateSearch() to fail silently.
+		this.app.workspace.onLayoutReady(async () => {
+			await this.loadTags();
+		});
 
 		this.registerEvent(this.app.metadataCache.on("changed", (file: TFile) => {
 			this.updateFileTags(file);
@@ -419,6 +424,13 @@ export class FlatTagView extends ItemView {
 
 		// ── Reliable Right-Click for Global Mute ────────────────────────────────────
 		tagEl.addEventListener("contextmenu", (e) => {
+			// On mobile the OS fires contextmenu on long-press.
+			// Suppress it so our touchstart timer can fire multi-select instead.
+			if (Platform.isMobile) {
+				e.preventDefault();
+				return;
+			}
+
 			e.preventDefault();
 			
 			const menu = new Menu();
@@ -501,11 +513,13 @@ export class FlatTagView extends ItemView {
 				return;
 			}
 
+			// Short tap: cancel the timer but do NOT call handleTagInteraction here.
+			// We delegate short taps entirely to the native `click` event, which is
+			// far more reliable on mobile (handles pane-focus on first tap, etc.).
+			// touchHandled stays false so the click event fires normally.
 			if (this.touchTimer) {
 				window.clearTimeout(this.touchTimer);
 				this.touchTimer = null;
-				touchHandled = true; 
-				void handleTagInteraction(false, false, false);
 			}
 		}, { passive: true });
 

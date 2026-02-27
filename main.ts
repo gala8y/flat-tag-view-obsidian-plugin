@@ -281,12 +281,45 @@ export default class FlatTagPlugin extends Plugin {
     private async handleEditorTrigger(
         trigger: { kind: "alt-click" | "drill-down" | "local-mute" | "strip-hash"; mouseEvent?: MouseEvent } | { kind: "mobile-long-press" }
     ) {
+        // const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        // if (!view) return;
+
+        // // Source / editor mode only
+        // const anyView = view as any;
+        // if (typeof anyView.getMode === "function" && anyView.getMode() !== "source") return;
+
+        // const editor = view.editor;
+        // if (!editor) return;
+
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
         if (!view) return;
 
-        // Source / editor mode only
-        const anyView = view as any;
-        if (typeof anyView.getMode === "function" && anyView.getMode() !== "source") return;
+        // Determine if we are in source mode
+        const isSourceMode =
+        (view as any).getMode &&
+        typeof (view as any).getMode === "function" &&
+        (view as any).getMode() === "source";
+
+        if (!isSourceMode) {
+        // Reading/Preview mode:
+        // Support ONLY Ctrl+Alt+Click drill-down on rendered tags
+        if ("kind" in trigger && trigger.kind === "drill-down" && trigger.mouseEvent) {
+            const target = trigger.mouseEvent.target as HTMLElement;
+            const tagEl = target?.closest(".tag");
+            const tagText = tagEl?.textContent?.trim();
+
+            if (tagText && tagText.startsWith("#") && !tagText.startsWith("#%")) {
+            await this.activateView();
+            setTimeout(() => {
+                const ftvLeaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)[0];
+                if (ftvLeaf && ftvLeaf.view instanceof FlatTagView) {
+                ftvLeaf.view.selectSingleTag(tagText);
+                }
+            }, 50);
+            }
+        }
+        return;
+        }
 
         const editor = view.editor;
         if (!editor) return;

@@ -1,18 +1,8 @@
 {
-  "pinnedTags": [
-    "żądło",
-    "based",
-    "hkfasudhfikasuhdf",
-    "lkhstral",
-    "may",
-    "new",
-    "2k25/09",
-    "⚡/0",
-    "2k24/10"
-  ],
+  "pinnedTags": [],
   "frequencyCutoff": 4,
   "frequencyCutoffEnabled": false,
-  "altClickTagMode": "in-place",
+  "altClickTagMode": "end-line",
   "mobileLongPressEnabled": true,
   "mobileLongPressMs": 1000,
   "showPlacementInStatusBar": true

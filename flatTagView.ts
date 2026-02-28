@@ -89,6 +89,9 @@ export class FlatTagView extends ItemView {
 	private lastInteractionWasTouch = false;
 	private renderId = 0;
 
+	private hoverFocusPrevLeaf: WorkspaceLeaf | null = null;
+	private hoverFocusArmed = false;
+
 	constructor(leaf: WorkspaceLeaf, plugin: FlatTagPlugin) {
 		super(leaf);
 		this.plugin = plugin;
@@ -198,6 +201,46 @@ export class FlatTagView extends ItemView {
 		});
 
 		this.tagContainer = this.container.createDiv({ cls: "flat-tag-list" });
+
+		// Hover-to-focus (desktop only). Restores previous leaf on leave if focus was only caused by hover.
+			this.registerDomEvent(this.containerEl, "mouseenter", (evt: MouseEvent) => {
+			if (Platform.isMobile) return;
+			if ((evt as any).buttons) return; // don't steal focus while dragging
+
+			const ws = this.app.workspace;
+			const cur = ws.activeLeaf;
+
+			// If we're already active, nothing to do.
+			if (cur?.view === this) return;
+
+			// Remember what was active so we can restore on mouseleave.
+			this.hoverFocusPrevLeaf = cur ?? null;
+			this.hoverFocusArmed = true;
+
+			ws.setActiveLeaf(this.leaf, { focus: true });
+			});
+
+			this.registerDomEvent(this.containerEl, "pointerdown", () => {
+			// User actively clicked/touched inside FTV => don't auto-restore on leave.
+			this.hoverFocusArmed = false;
+			}, { passive: true });
+
+			this.registerDomEvent(this.containerEl, "mouseleave", () => {
+			if (Platform.isMobile) return;
+			if (!this.hoverFocusArmed) return;
+
+			const ws = this.app.workspace;
+
+			// Only restore if FTV is still the active leaf.
+			if (ws.activeLeaf?.view !== this) return;
+
+			const prev = this.hoverFocusPrevLeaf;
+			this.hoverFocusArmed = false;
+			this.hoverFocusPrevLeaf = null;
+
+			if (prev) ws.setActiveLeaf(prev, { focus: true });
+		});
+
 
 		this.registerDomEvent(document, "keydown", (evt: KeyboardEvent) => {
 			if (this.app.workspace.activeLeaf?.view !== this) return;

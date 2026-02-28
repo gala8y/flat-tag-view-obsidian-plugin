@@ -800,6 +800,9 @@ export default class FlatTagPlugin extends Plugin {
         }
 
         workspace.revealLeaf(leaf);
+        // this steals focus for ftv
+        workspace.setActiveLeaf(leaf, { focus: true });
+
     }
 
     private addStyle() {

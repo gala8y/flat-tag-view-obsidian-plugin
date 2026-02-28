@@ -250,27 +250,27 @@ export class FlatTagView extends ItemView {
 		const t = evt.target;
 		if (t == null ? void 0 : t.closest("input, textarea, [contenteditable='true']")) return;
 
-		if (!evt.shiftKey || evt.ctrlKey || evt.metaKey || evt.altKey) return;
+		if (evt.ctrlKey || evt.metaKey || evt.altKey) return;
 
-		// Shift+1 ("!") => scroll to top
-		if (evt.code === "Digit1" || evt.code === "Numpad1") {
+			// Digits: require real Shift
+			if (evt.shiftKey && (evt.code === "Digit1" || evt.code === "Numpad1")) {
 			evt.preventDefault();
 			this.tagContainer?.scrollTo({ top: 0, behavior: "instant" });
 			return;
 		}
 
-		// Shift+0 (")") => scroll to end
-		if (evt.code === "Digit0" || evt.code === "Numpad0") {
+		if (evt.shiftKey && (evt.code === "Digit0" || evt.code === "Numpad0")) {
 			evt.preventDefault();
 			const c = this.tagContainer;
 			if (!c) return;
-
-			c.scrollTo({
-			top: Math.max(0, c.scrollHeight - c.clientHeight),
-			behavior: "instant",
-			});
+			c.scrollTo({ top: Math.max(0, c.scrollHeight - c.clientHeight), behavior: "instant" });
 			return;
 		}
+
+		// Letters: Shift OR CapsLock
+		const caps = evt.getModifierState?.("CapsLock") ?? false;
+		if (!evt.shiftKey && !caps) return;
+
 
 		if (evt.key.length !== 1) return;
 
@@ -469,7 +469,7 @@ export class FlatTagView extends ItemView {
 		const delta = tRect.top - cRect.top;
 		const desired = container.scrollTop + delta - container.clientHeight / 3;
 
-		container.scrollTo({ top: Math.max(0, desired), behavior: "smooth" });
+		container.scrollTo({ top: Math.max(0, desired), behavior: "instant" });
 	}
 
 

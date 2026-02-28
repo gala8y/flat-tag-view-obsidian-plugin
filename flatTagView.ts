@@ -766,12 +766,20 @@ export class FlatTagView extends ItemView {
 	}
 
 	public toggleTaskMode() {
-		if (this.searchMode === "task")           this.searchMode = "task-todo";
+		if (this.searchMode === "task") this.searchMode = "task-todo";
 		else if (this.searchMode === "task-todo") this.searchMode = "task-done";
 		else if (this.searchMode === "task-done") this.searchMode = "task";
-		else                                       this.searchMode = "task";
+		else {
+			const label = this.taskBtn?.innerText ?? "TASK-ALL";
+			this.searchMode =
+			label === "TASK-TODO" ? "task-todo" :
+			label === "TASK-DONE" ? "task-done" :
+			"task";
+		}
+
 		this.updateModeUI();
 	}
+
 
 	public toggleSort() {
 		this.currentSort = this.currentSort === "az" ? "count" : "az";

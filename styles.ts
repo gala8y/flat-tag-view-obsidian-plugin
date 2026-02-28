@@ -258,6 +258,9 @@ export const getStyles = (): string => {
 }
 
 .flat-tag-pinned-section {
+	position: sticky;
+  	top: 0;
+  	z-index: 5;
 	width: 100%;
 	display: flex;
 	flex-wrap: wrap;

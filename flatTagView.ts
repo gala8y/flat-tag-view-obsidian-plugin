@@ -199,6 +199,23 @@ export class FlatTagView extends ItemView {
 
 		this.tagContainer = this.container.createDiv({ cls: "flat-tag-list" });
 
+		this.registerDomEvent(document, "keydown", (evt: KeyboardEvent) => {
+			if (this.app.workspace.activeLeaf?.view !== this) return;
+
+			const t = evt.target as HTMLElement | null;
+			if (t?.closest("input, textarea, [contenteditable='true']")) return;
+
+			if (!evt.shiftKey || evt.ctrlKey || evt.metaKey || evt.altKey) return;
+			if (evt.key.length !== 1) return;
+
+			const ch = evt.key.toUpperCase();
+			if (!/^\p{L}$/u.test(ch)) return;
+
+			evt.preventDefault();
+			this.scrollHeaderToOneThird(ch);
+		});
+
+
 		this.syncCutoffControlsFromSettings();
 		this.updateModeUI(true);
 
@@ -361,6 +378,28 @@ export class FlatTagView extends ItemView {
 			sortedTags.forEach(([tag, count]) => this.createTagElement(tag, count, this.tagContainer));
 		}
 	}
+
+	private scrollHeaderToOneThird(letter: string) {
+		const container = this.tagContainer;
+		if (!container) return;
+
+		const wanted = letter.trim().toUpperCase();
+		if (!wanted) return;
+
+		const headers = Array.from(container.querySelectorAll<HTMLElement>(".flat-tag-letter"));
+		const target = headers.find(h => (h.textContent ?? "").trim().toUpperCase() === wanted);
+		if (!target) return;
+
+		const cRect = container.getBoundingClientRect();
+		const tRect = target.getBoundingClientRect();
+
+		const delta = tRect.top - cRect.top;
+		const desired = container.scrollTop + delta - container.clientHeight / 3;
+
+		container.scrollTo({ top: Math.max(0, desired), behavior: "smooth" });
+	}
+
+
 
 	private createTagElement(tag: string, count: number, parentEl: HTMLElement) {
 		const tagEl = parentEl.createSpan({ cls: "flat-tag" });

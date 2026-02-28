@@ -31,7 +31,7 @@ By default, selecting multiple tags in FTV works on a **Note-level** basis. Clic
 | **TASK-DONE** | Only shows tags that co-occur on a completed task line (`- [x]`). |
 
 
-_Important Notes on Task Modes_
+#### _Notes on Task Modes_
 
 1. When you switch to any of 'TASK` modes, the FTV pane will still display **all tags in your vault** until you actually click your first tag to begin filtering. Scanning every line of every file in the vault just to hide non-task tags from the initial view would be computationally expensive and cause significant lag. The strict line/task filtering kicks in *after* you make your first selection.
 
@@ -132,40 +132,40 @@ Let's push it some more, and stop just before feature creep _really_ kicks in.
 possibly maybe planned:
 - high: scopes (select precofigured sets of folders, quick access from dropdown in ftv pane)
 - high: keyboard navigation in ftv pane
-- high: improved prefilter for tasks (see _Notes on Task Modes: 1. above_)
-- fix: on mobile tags from FTV are not always properly sent to search pane
+- high: improved prefilter for tasks (see _[notes on task modes: 1.](#notes-on-task-modes)_ above)
+- fix: on mobile tags from ftv are not always properly sent to search pane
 - fix: on mobile selected tags do not always get background highlight immediately
 - mid: handling of other types of tasks beyond `[ ]` & `[x]`
 - low: recency of tags in use (?)
 
 
 ### ver. 0.4.0 changelog
-- added: editor drill-down (ctrl-alt-click tag in editor to instantly filter it in FTV)
+- added: editor drill-down (ctrl-alt-click tag in editor to instantly filter it in ftv)
 - added: local mute/unmute (ctrl-shift-alt-click) tag in editor to safely disable it as `#%tag` and re-enable it
-- added: global mute (right-click tag in FTV to decommission it across entire vault)
-- added: three new hotkeys to directly set SOL, INP, or EOL modes
+- added: global mute (right-click tag in ftv to decommission it across entire vault)
+- added: three new hotkeys to directly set sol, inp, or eol modes
 - added: clickable status bar text to quickly cycle placement modes
-- added: glow hint for non-empty FTV search box if unfocused
+- added: glow hint for non-empty ftv search box if unfocused
 - fixed: improved a-z universal sorting
 - fixed: handling touch and long touch on mobile
-- quirky: on mobile tags from FTV are not always properly sent to search pane
+- quirky: on mobile tags from ftv are not always properly sent to search pane
 - quirky: on mobile selected tags do not always get background highlight immediately
 - (not much of an) easter egg: clicking the active sort button reveals total unique vault tag count
 
 ### ver. 0.3.0 changelog
 - added: tag insertion and deletion
-    - alt-click tag insertion in editor (SOL / INP / EOL modes)
+    - alt-click tag insertion in editor (sol / inp / eol modes)
         - modes: start of line, in place, end of line
         - auto-detection: alt-click on existing `#tag` removes it, on plain word creates it
         - tag insertion preserves `^block-id` suffix when placing tags at end of line
         - newly inserted tags are sorted alphabetically with existing leading/trailing tags
-    - added: status bar indicator showing current tag placement mode (SOL / INP / EOL)
-    - added: "Show placement in status bar" toggle in settings
-    - added: "Cycle Tag Placement" hotkey command
+    - added: status bar indicator showing current tag placement mode (sol / inp / eol)
+    - added: "show placement in status bar" toggle in settings
+    - added: "cycle tag placement" hotkey command
 - ~~added mobile long-press support for editor tag insertion~~
 
 ### ver. 0.2.2 changelog
-- optimized view update logic (now FTV view updates quickly after current note changes)
+- optimized view update logic (now ftv view updates quickly after current note changes)
 - added ability to pin/unpin tags to top of flat-tag-view (with alt-click)
 - added line-mode (check co-occurrence per line, tags have to be on same line to show up as co-occurring)
 - added tasks-mode (same as line-mode, but works only with tasks)

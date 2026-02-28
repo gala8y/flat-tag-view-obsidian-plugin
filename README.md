@@ -124,6 +124,21 @@ _Other modifier actions are disabled in Preview._
 - _0.3.0 gpt 5.2 / gemini 3.1 pro_
 - _0.4.0 gemini 3.1 pro / chatGPT_
 
+### roadmap
+Flat Tag View - Where Tags Become First-Class Citizens. _Notes become secondary._
+
+Let's push it some more, and stop just before feature creep _really_ kicks in.
+
+possibly maybe planned:
+- high: scopes (select precofigured sets of folders, quick access from dropdown in ftv pane)
+- high: keyboard navigation in ftv pane
+- high: improved prefilter for tasks (see _Notes on Task Modes: 1. above_)
+- fix: on mobile tags from FTV are not always properly sent to search pane
+- fix: on mobile selected tags do not always get background highlight immediately
+- mid: handling of other types of tasks beyond `[ ]` & `[x]`
+- low: recency of tags in use (?)
+
+
 ### ver. 0.4.0 changelog
 - added: editor drill-down (ctrl-alt-click tag in editor to instantly filter it in FTV)
 - added: local mute/unmute (ctrl-shift-alt-click) tag in editor to safely disable it as `#%tag` and re-enable it

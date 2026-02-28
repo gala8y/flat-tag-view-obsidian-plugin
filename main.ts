@@ -44,6 +44,15 @@ export default class FlatTagPlugin extends Plugin {
         });
 
         this.addCommand({
+            id: "toggle-flat-tag-frequency-cutoff",
+            name: "Toggle Frequency Cutoff",
+            callback: async () => {
+                this.settings.frequencyCutoffEnabled = !this.settings.frequencyCutoffEnabled;
+                await this.saveSettings();
+            },
+        });
+
+        this.addCommand({
             id: "clear-flat-tag-search",
             name: "Clear Flat Tag Search Box",
             callback: () => {

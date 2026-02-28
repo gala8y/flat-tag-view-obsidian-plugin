@@ -242,57 +242,87 @@ export class FlatTagView extends ItemView {
 		});
 
 
-		this.registerDomEvent(document, "keydown", (evt: KeyboardEvent) => {
-			if (this.app.workspace.activeLeaf?.view !== this) return;
+		this.registerDomEvent(document, "keydown", (evt) => {
+		var _a;
 
-			const t = evt.target as HTMLElement | null;
-			if (t?.closest("input, textarea, [contenteditable='true']")) return;
+		if (((_a = this.app.workspace.activeLeaf) == null ? void 0 : _a.view) !== this) return;
 
-			if (!evt.shiftKey || evt.ctrlKey || evt.metaKey || evt.altKey) return;
-			if (evt.key.length !== 1) return;
+		const t = evt.target;
+		if (t == null ? void 0 : t.closest("input, textarea, [contenteditable='true']")) return;
 
-			const ch = evt.key.toUpperCase();
-			if (!/^\p{L}$/u.test(ch)) return;
+		if (!evt.shiftKey || evt.ctrlKey || evt.metaKey || evt.altKey) return;
 
+		// Shift+1 ("!") => scroll to top
+		if (evt.code === "Digit1" || evt.code === "Numpad1") {
 			evt.preventDefault();
-			this.scrollHeaderToOneThird(ch);
-		});
+			this.tagContainer?.scrollTo({ top: 0, behavior: "instant" });
+			return;
+		}
 
+		// Shift+0 (")") => scroll to end
+		if (evt.code === "Digit0" || evt.code === "Numpad0") {
+			evt.preventDefault();
+			const c = this.tagContainer;
+			if (!c) return;
+
+			c.scrollTo({
+			top: Math.max(0, c.scrollHeight - c.clientHeight),
+			behavior: "instant",
+			});
+			return;
+		}
+
+		if (evt.key.length !== 1) return;
+
+		const ch = evt.key.toUpperCase();
+		if (!/^\p{L}$/u.test(ch)) return;
+
+		evt.preventDefault();
+		this.scrollHeaderToOneThird(ch);
+		});
 
 		this.syncCutoffControlsFromSettings();
 		this.updateModeUI(true);
 
 		this.app.workspace.onLayoutReady(async () => {
-			await this.loadTags();
+		await this.loadTags();
 		});
 
-		this.registerEvent(this.app.metadataCache.on("changed", (file: TFile) => {
+		this.registerEvent(
+		this.app.metadataCache.on("changed", (file) => {
 			this.updateFileTags(file);
-		}));
+		})
+		);
 
-		this.registerEvent(this.app.vault.on("delete", (file) => {
-			if (file instanceof TFile && file.extension === "md") {
-				this.removeFileTags(file.path);
-				this.renderTags();
+		this.registerEvent(
+		this.app.vault.on("delete", (file) => {
+			if (file instanceof import_obsidian.TFile && file.extension === "md") {
+			this.removeFileTags(file.path);
+			this.renderTags();
 			}
-		}));
+		})
+		);
 
-		this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-			if (file instanceof TFile && file.extension === "md") {
-				const tags = this.tagsByFile.get(oldPath);
-				if (tags) {
-					this.tagsByFile.set(file.path, tags);
-					this.tagsByFile.delete(oldPath);
-				}
+		this.registerEvent(
+		this.app.vault.on("rename", (file, oldPath) => {
+			if (file instanceof import_obsidian.TFile && file.extension === "md") {
+			const tags = this.tagsByFile.get(oldPath);
+			if (tags) {
+				this.tagsByFile.set(file.path, tags);
+				this.tagsByFile.delete(oldPath);
 			}
-		}));
+			}
+		})
+		);
 
-		this.registerEvent(this.app.workspace.on("flat-tag-view:settings-updated" as any, () => {
+		this.registerEvent(
+		this.app.workspace.on("flat-tag-view:settings-updated", () => {
 			this.syncCutoffControlsFromSettings();
 			this.renderTags();
-		}));
+		})
+		);
 	}
-
+		
 	async onClose() {
 		this.contentEl.empty();
 	}

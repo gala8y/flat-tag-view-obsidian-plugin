@@ -131,11 +131,13 @@ Let's push it some more, and stop just before feature creep _really_ kicks in.
 
 possibly maybe planned:
 - high: scopes (select precofigured sets of folders, quick access from dropdown in ftv pane)
-- high: keyboard navigation in ftv pane
+- high: keyboard navigation and tag selection in ftv pane
 - high: improved prefilter for tasks (see _[notes on task modes: 1.](#notes-on-task-modes)_ above)
+- high: pop-ups with files list on mouse on tag hover (scopes sensitive) [roadmap-popups](./flat-tag-view-roadmap-popups.png)
 - fix: on mobile tags from ftv are not always properly sent to search pane
 - fix: on mobile selected tags do not always get background highlight immediately
 - mid: handling of other types of tasks beyond `[ ]` & `[x]`
+- low: send tags from ftv to editor
 - low: recency of tags in use (?)
 
 

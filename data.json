@@ -8,7 +8,18 @@
   "mobileLongPressMs": 1000,
   "popupSortMode": "newest",
   "popupResultCount": "max",
-  "scopes": [],
+  "scopes": [
+    {
+      "id": "1773060364568",
+      "name": "a",
+      "folders": [
+        {
+          "path": "folder_B",
+          "included": false
+        }
+      ]
+    }
+  ],
   "scopesOn": false,
-  "lastScopeId": null
+  "lastScopeId": "1773060364568"
 }

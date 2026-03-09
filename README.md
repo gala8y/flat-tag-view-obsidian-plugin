@@ -190,6 +190,9 @@ possibly / maybe / planned:
 - low: recency of tags in use (?)
 - no: virtualization of pane view
 
+# next-release
+- fixed: task-modes files pop-up lists too many files, tasks are properly listed in tasks pop-ups
+
 ### ver. 0.6.0 changelog
 - added: scopes for defining included/excluded folder rules
 - added: tag's superscripts (`ℓ` for lines, `τ` for all tasks, `☐` for todos, `✓` for done)

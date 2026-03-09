@@ -1,0 +1,14 @@
+{
+  "pinnedTags": [],
+  "frequencyCutoff": 6,
+  "frequencyCutoffEnabled": false,
+  "altClickTagMode": "end-line",
+  "showPlacementInStatusBar": true,
+  "mobileLongPressEnabled": true,
+  "mobileLongPressMs": 1000,
+  "popupSortMode": "newest",
+  "popupResultCount": "max",
+  "scopes": [],
+  "scopesOn": false,
+  "lastScopeId": null
+}

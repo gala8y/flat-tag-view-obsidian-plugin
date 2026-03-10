@@ -100,7 +100,7 @@ FTV works on Obsidian for Android and (probably) on iOS (not tested) without any
 | Tags Pane     | Scopes                       | Create custom sets of included/excluded folders to dynamically filter the FTV |
 | Tag insertion | Alt-click tag placement      | SOL / INP / EOL — where a newly created tag is placed                         |
 | Tag insertion | Show placement in status bar | Displays SOL / INP / EOL in the Obsidian status bar                           |
-| Hover Popups  | Sort mode & Count            | Adjusts the default sort and limit of files shown in hover popups             |
+
 
 ## Hotkeys
 All hotkeys are unbound by default and can be assigned in Obsidian Settings → Hotkeys.
@@ -125,7 +125,7 @@ All hotkeys are unbound by default and can be assigned in Obsidian Settings → 
 | Mute/Unmute tag instance at cursor     | Local Mute / Unmute tag in place (#tag ↔ #%tag)       | 
 
 
-## Modifier + click Actions Summary
+## Modifier-click Actions Summary
 
 **In Flat Tag View (FTV Pane)**
 

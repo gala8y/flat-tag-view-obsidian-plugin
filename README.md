@@ -183,13 +183,15 @@ This software is licensed under the [MIT License](./LICENSE).
 Flat Tag View - Where Tags Become First-Class Citizens. _Notes become secondary._
 
 possibly / maybe / planned:
-- will-fix: task-modes files pop-up lists too many files, tasks are properly listed in tasks pop-ups
 - high/fix: on mobile tags from ftv are not always properly sent to search pane
 - high/fix: on mobile selected tags do not always get background highlight immediately
 - mid: some way to temporarily bypass obsidian exluded folders
 - mid: cursor jumps to start of line on tag creation/removal in editor
 - low: recency of tags in use (?)
 - no: virtualization of pane view
+
+# ver. 0.6.1 changelog
+- fixed: task-modes files pop-up lists too many files
 
 ### ver. 0.6.0 changelog
 - added: scopes for defining included/excluded folder rules

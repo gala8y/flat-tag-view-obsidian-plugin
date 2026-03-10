@@ -1812,7 +1812,21 @@ var FlatTagView = class extends import_obsidian.ItemView {
     ]);
     this.positionPopup(anchor, box);
   }
-  getPopupFiles(tag) {
+  async getPopupFiles(tag) {
+    if (this.searchMode.startsWith("task")) {
+      const tasks = await this.getPopupTasks(tag);
+      const uniquePaths = /* @__PURE__ */ new Set();
+      const results2 = [];
+      for (const task of tasks) {
+        if (!uniquePaths.has(task.file.path)) {
+          uniquePaths.add(task.file.path);
+          const parts = task.file.path.split("/");
+          const folder = parts.length > 1 ? parts[parts.length - 2] : "/";
+          results2.push({ file: task.file, folder });
+        }
+      }
+      return results2;
+    }
     const selected = Array.from(this.selectedTags);
     const excluded = Array.from(this.excludedTags);
     const required = [.../* @__PURE__ */ new Set([...selected, tag])];
@@ -2010,7 +2024,7 @@ var FlatTagView = class extends import_obsidian.ItemView {
         }
       }
     } else {
-      let allResults = this.getPopupFiles(tag);
+      let allResults = await this.getPopupFiles(tag);
       if (sortMode === "newest") {
         allResults.sort((a2, b) => b.file.stat.mtime - a2.file.stat.mtime);
       } else {

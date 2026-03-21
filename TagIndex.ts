@@ -1,4 +1,5 @@
 
+
 import { App, CachedMetadata, TFile } from "obsidian";
 
 
@@ -223,6 +224,8 @@ export class TagIndex {
     return tag;
   }
 }
+
+
 
 
 

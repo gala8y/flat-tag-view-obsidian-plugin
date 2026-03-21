@@ -1,3 +1,4 @@
+
 import {
 	ItemView,
 	Platform,
@@ -72,6 +73,75 @@ class GlobalMuteConfirmModal extends Modal {
 	}
 }
 
+
+const filterWorkerCode = `
+self.onmessage = function(e) {
+    const { msgId, tagsByFile, allTags, selectedArr, excludedArr, scopesOn, scopes, activeScopeId } = e.data;
+
+    const fileInScope = (filePath) => {
+        if (!scopesOn) return true;
+        const activeScope = scopes && scopes.length > 0 ? (scopes.find((s) => s.id === activeScopeId) || scopes[0]) : null;
+        if (!activeScope || !activeScope.folders || activeScope.folders.length === 0) return true;
+
+        let included = false;
+        let hasInclusions = false;
+
+        const inFolder = (fp, folderPath) => {
+            if (folderPath === "/") return !fp.includes("/");
+            if (folderPath === "") return true;
+            const normalized = folderPath.endsWith("/") ? folderPath.slice(0, -1) : folderPath;
+            return fp.startsWith(normalized + "/") || fp === normalized;
+        };
+
+        for (let i = 0; i < activeScope.folders.length; i++) {
+            const folder = activeScope.folders[i];
+            if (!folder.included) {
+                if (inFolder(filePath, folder.path)) return false;
+            } else {
+                hasInclusions = true;
+                if (inFolder(filePath, folder.path)) included = true;
+            }
+        }
+
+        if (included) return true;
+        if (!hasInclusions) return true;
+        return false;
+    };
+
+    const matchingFiles = [];
+
+    tagsByFile.forEach((tagsArr, filePath) => {
+        if (!fileInScope(filePath)) return;
+
+        let matchesSelected = true;
+        for (let i = 0; i < selectedArr.length; i++) {
+            if (!tagsArr.includes(selectedArr[i])) {
+                matchesSelected = false;
+                break;
+            }
+        }
+
+        if (matchesSelected) matchingFiles.push(filePath);
+    });
+
+    let filtered = new Map();
+    if (selectedArr.length === 0 && !scopesOn) {
+        filtered = new Map(allTags);
+    } else {
+        for (let i = 0; i < matchingFiles.length; i++) {
+            const tags = tagsByFile.get(matchingFiles[i]);
+            if (!tags) continue;
+            for (let j = 0; j < tags.length; j++) {
+                const t = tags[j];
+                filtered.set(t, (filtered.get(t) || 0) + 1);
+            }
+        }
+    }
+
+    self.postMessage({ msgId, filteredTags: filtered });
+};
+`;
+
 export class FlatTagView extends ItemView {
 	public plugin: FlatTagPlugin;
 	public tagIndex: TagIndex;
@@ -91,6 +161,152 @@ export class FlatTagView extends ItemView {
 	private excludedTags: Set<string> = new Set();
 
 	private currentSort: SortMode = "az";
+	private shortcutBuffer: string = "";
+
+	// Web Worker properties
+	private filterWorker: Worker | null = null;
+	private workerResolvers: Map<number, (val: Map<string, number>) => void> = new Map();
+	private workerMsgId: number = 0;
+
+	private initWorker() {
+		if (this.filterWorker) return;
+		const blob = new Blob([filterWorkerCode], { type: 'application/javascript' });
+		this.filterWorker = new Worker(URL.createObjectURL(blob));
+		this.filterWorker.onmessage = (e) => {
+			const { msgId, filteredTags } = e.data;
+			const resolver = this.workerResolvers.get(msgId);
+			if (resolver) {
+				resolver(filteredTags);
+				this.workerResolvers.delete(msgId);
+			}
+		};
+	}
+
+
+
+	// Optimization properties
+	private tagPool: HTMLElement[] = [];
+	private headerPool: HTMLElement[] = [];
+	
+	
+	
+	
+	
+	
+	
+
+
+		private resizeObserver: ResizeObserver | null = null;
+	private scrollTimeout: number | null = null;
+	private visibleTagsRegistry: HTMLElement[] = [];
+
+	private updateVisibleShortcuts() {
+		if (!this.shortcutsEnabled) return;
+		const container = this.tagContainer;
+		if (!container) return;
+
+		if (container.clientHeight === 0) {
+			window.setTimeout(() => this.updateVisibleShortcuts(), 100);
+			return;
+		}
+
+		const pinnedContainer = container.querySelector('.flat-tag-pinned-section') as HTMLElement | null;
+		const pinnedTags = pinnedContainer ? Array.from(pinnedContainer.querySelectorAll('.flat-tag')) as HTMLElement[] : [];
+		const normalTags = Array.from(container.querySelectorAll('.flat-tag:not(.flat-tag-pinned)')) as HTMLElement[];
+
+		// Use pure screen coordinates! No scrollTop math to mess up.
+		const cRect = container.getBoundingClientRect();
+		// If there is a pinned section, the "visible" normal area starts strictly below it
+		const pinnedRect = pinnedContainer ? pinnedContainer.getBoundingClientRect() : null;
+
+		const effectiveTop = pinnedRect ? pinnedRect.bottom : cRect.top;
+		const effectiveBottom = cRect.bottom;
+
+		this.visibleTagsRegistry.forEach(el => {
+			const badge = el.querySelector('.ftv-shortcut-badge');
+			if (badge) badge.textContent = "";
+			el.dataset.shortcut = "";
+		});
+		this.visibleTagsRegistry = [];
+
+		let shortcutIndex = 1;
+
+		for (const el of pinnedTags) {
+			const badge = el.querySelector('.ftv-shortcut-badge');
+			if (badge) {
+				const label = String(shortcutIndex);
+				badge.textContent = label;
+				el.dataset.shortcut = String(shortcutIndex);
+				this.visibleTagsRegistry.push(el);
+				shortcutIndex++;
+			}
+		}
+
+		if (normalTags.length > 0) {
+			let low = 0;
+			let high = normalTags.length - 1;
+			let startIndex = 0;
+
+			while (low <= high) {
+				const mid = Math.floor((low + high) / 2);
+				const el = normalTags[mid];
+				const rect = el.getBoundingClientRect();
+
+				if (rect.bottom >= effectiveTop && rect.top <= effectiveBottom) {
+					startIndex = mid;
+					high = mid - 1; 
+				} else if (rect.top > effectiveBottom) {
+					high = mid - 1;
+				} else {
+					low = mid + 1;
+				}
+			}
+
+			for (let i = startIndex; i < normalTags.length; i++) {
+				const el = normalTags[i];
+				const rect = el.getBoundingClientRect();
+
+				if (rect.top > effectiveBottom + 100) break; // Break if we are well below the screen
+                if (rect.bottom < effectiveTop) continue; // Skip if it's hiding behind the pinned header
+
+				const badge = el.querySelector('.ftv-shortcut-badge');
+				if (badge) {
+					const label = String(shortcutIndex);
+					badge.textContent = label;
+					el.dataset.shortcut = String(shortcutIndex);
+					this.visibleTagsRegistry.push(el);
+					shortcutIndex++;
+				}
+			}
+		}
+
+        if (shortcutIndex > 100) {
+            this.visibleTagsRegistry.forEach(el => {
+                const num = parseInt(el.dataset.shortcut || "0");
+                const badge = el.querySelector('.ftv-shortcut-badge');
+                if (badge) badge.textContent = String(num);
+            });
+        } else {
+        }
+	}
+	private recycleDOM() {
+		while (this.tagContainer.firstChild) {
+			const child = this.tagContainer.firstChild as HTMLElement;
+			this.tagContainer.removeChild(child);
+
+			if (child.hasClass("flat-tag")) {
+				child.className = "flat-tag";
+				child.textContent = ""; // Clear content fully
+				this.tagPool.push(child);
+			} else if (child.hasClass("flat-tag-letter") || child.hasClass("flat-tag-separator")) {
+				child.className = "";
+				child.textContent = "";
+				this.headerPool.push(child);
+			}
+		}
+	}
+	private shortcutTimeout: number | null = null;
+	private shortcutsEnabled: boolean = true;
 	private searchMode: SearchMode = "note";
 	private tagSearchText = "";
 
@@ -379,6 +595,20 @@ export class FlatTagView extends ItemView {
 		this.notelineBtn.addEventListener("click", () => this.toggleNoteLineMode());
 
 		this.tagContainer = this.container.createDiv({ cls: "flat-tag-list" });
+		this.tagContainer.addEventListener("scroll", () => {
+			if (this.scrollTimeout) window.clearTimeout(this.scrollTimeout);
+			this.scrollTimeout = window.setTimeout(() => {
+				this.updateVisibleShortcuts();
+			}, 100); // 100ms debounce
+		});
+
+		this.resizeObserver = new ResizeObserver(() => {
+			if (this.scrollTimeout) window.clearTimeout(this.scrollTimeout);
+			this.scrollTimeout = window.setTimeout(() => {
+				this.updateVisibleShortcuts();
+			}, 100);
+		});
+		this.resizeObserver.observe(this.tagContainer);
 		this.initDelegatedListeners();
 
 		const bottomContainer = this.container.createDiv({ cls: "flat-tag-bottom-container" });
@@ -398,6 +628,7 @@ export class FlatTagView extends ItemView {
 		searchBox.addEventListener("input", (e) => {
 			const target = e.target as HTMLInputElement;
 			this.tagSearchText = target.value ?? "";
+			this.isSearchSticky = true; // Typing inside the box makes the search sticky!
 			void this.renderTags();
 		});
 
@@ -474,8 +705,105 @@ export class FlatTagView extends ItemView {
 		this.registerDomEvent(document, "keydown", (evt: KeyboardEvent) => {
 			if (this.app.workspace.activeLeaf?.view !== this) return;
 
-			const t = evt.target as HTMLElement;
-			if (t && t.closest("input, textarea, [contenteditable='true']")) return;
+						const t = evt.target as HTMLElement;
+			const isInput = !!(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable));
+
+						// If they are actively typing inside ANY input box (search, cutoff, etc.),
+			// DO NOT steal their keystrokes for shortcuts. Let them type normally.
+			if (isInput) {
+				if (evt.key === "Escape") {
+					const searchInput = this.container.querySelector(".flat-tag-search-input") as HTMLInputElement | null;
+					const hasText = this.tagSearchText.length > 0 || (searchInput && searchInput.value.length > 0);
+					if (hasText) {
+						evt.preventDefault();
+						evt.stopPropagation();
+						this.clearSearchBox();
+						this.app.workspace.setActiveLeaf(this.leaf, { focus: true });
+					}
+				}
+				return;
+			}
+
+			if (evt.key === "Escape") {
+				const searchInput = this.container.querySelector(".flat-tag-search-input") as HTMLInputElement | null;
+				const hasText = this.tagSearchText.length > 0 || (searchInput && searchInput.value.length > 0);
+				if (hasText) {
+					evt.preventDefault();
+					evt.stopPropagation();
+					this.clearSearchBox();
+					this.app.workspace.setActiveLeaf(this.leaf, { focus: true });
+				}
+				return;
+			}
+
+			// --- NEW: Numeric Shortcuts Interceptor (Single Digits) ---
+			if (this.shortcutsEnabled && !evt.ctrlKey && !evt.metaKey && !evt.altKey && /^[0-9]$/.test(evt.key)) {
+				evt.preventDefault();
+				this.shortcutBuffer += evt.key;
+
+				// Clear any existing execution timer
+				if (this.shortcutTimeout) window.clearTimeout(this.shortcutTimeout);
+
+				// Wait 400ms for the user to finish typing. If they type another digit, it resets.
+				this.shortcutTimeout = window.setTimeout(() => {
+					const targetIndex = parseInt(this.shortcutBuffer, 10);
+					this.shortcutBuffer = ""; // Reset buffer
+
+					// Double/Triple zero (or just 0) resets the filter
+					if (targetIndex === 0) {
+						this.tagSearchText = "";
+						const searchInput = this.container.querySelector(".flat-tag-search-input") as HTMLInputElement | null;
+						if (searchInput) searchInput.value = "";
+
+						this.selectedTags.clear();
+						this.excludedTags.clear();
+
+						void this.renderTags();
+						void this.updateSearch();
+						return;
+					}
+
+					if (targetIndex > 0) {
+						const targetEl = this.visibleTagsRegistry.find(el => el.dataset.shortcut === String(targetIndex));
+						if (targetEl) {
+							const tag = targetEl.dataset.tag;
+							if (tag) {
+								void this.handleTagInteraction(tag, targetEl, true, false, false);
+							}
+						}
+					}
+				}, 400); // 400ms debounce
+
+				return;
+			}
+
+			// --- NEW: SPACEBAR TOGGLES SHORTCUTS ---
+			if (evt.key === " ") {
+				evt.preventDefault();
+				this.shortcutsEnabled = !this.shortcutsEnabled;
+
+				if (this.shortcutTimeout) window.clearTimeout(this.shortcutTimeout);
+				this.shortcutBuffer = "";
+
+				if (!this.shortcutsEnabled) {
+					this.tagContainer?.addClass("ftv-shortcuts-disabled");
+					this.visibleTagsRegistry.forEach(el => {
+						const badge = el.querySelector('.ftv-shortcut-badge');
+						if (badge) badge.textContent = "";
+					});
+				} else {
+					this.tagContainer?.removeClass("ftv-shortcuts-disabled");
+					this.updateVisibleShortcuts();
+				}
+				return;
+			}
+
+			// If they type a normal letter/symbol, clear the number buffer
+			if (evt.key.length === 1 && /[^\s"'`\]\[{}()=+\\|,<.>!?:;*&^@#%]/.test(evt.key)) {
+				this.shortcutBuffer = "";
+				if (this.shortcutTimeout) window.clearTimeout(this.shortcutTimeout);
+			}
+
 			if (evt.ctrlKey || evt.metaKey || evt.altKey) return;
 
 			if (evt.shiftKey && (evt.code === "Digit1" || evt.code === "Numpad1")) {
@@ -508,6 +836,11 @@ export class FlatTagView extends ItemView {
 			}
 
 			if (evt.key === "Backspace") {
+				if (this.shortcutBuffer.length > 0) {
+					evt.preventDefault();
+					this.shortcutBuffer = this.shortcutBuffer.slice(0, -1);
+					return;
+				}
 				evt.preventDefault();
 				if (this.tagSearchText.length > 0) {
 					this.tagSearchText = this.tagSearchText.slice(0, -1);
@@ -520,20 +853,13 @@ export class FlatTagView extends ItemView {
 				return;
 			}
 
-			if (evt.key === "Escape") {
-				if (this.tagSearchText.length > 0) {
-					evt.preventDefault();
-					evt.stopPropagation();
-					this.clearSearchBox();
-					this.app.workspace.setActiveLeaf(this.leaf, { focus: true });
-				}
-				return;
-			}
+			
 
 			if (evt.key.length === 1) {
-				if (/[^\\s"'`\]\[{}()=+\\|,<.>!?:;*&^@#%]/.test(evt.key)) {
+				if (/[^\s"'`\]\[{}()=+\\|,<.>!?:;*&^@#%]/.test(evt.key)) {
 					evt.preventDefault();
 					this.tagSearchText += evt.key;
+					this.isSearchSticky = false; // Fly-by typing is transient!
 
 					const searchInput = this.container.querySelector(
 						".flat-tag-search-input"
@@ -641,6 +967,7 @@ export class FlatTagView extends ItemView {
 	}
 
 	async onClose() {
+		if (this.resizeObserver) this.resizeObserver.disconnect();
 		this.tagIndex.onUpdate.delete(this.renderTagsCallback);
 		this.clearHoverPreview();
 		this.closeHelpPopup();
@@ -649,7 +976,7 @@ export class FlatTagView extends ItemView {
 		if (this.taskPressTimer) window.clearTimeout(this.taskPressTimer);
 	}
 
-	async renderTags() {
+		async renderTags() {
 		this.sortAzBtn.toggleClass("is-active", this.currentSort === "az");
 		this.sortCountBtn.toggleClass("is-active", this.currentSort === "count");
 
@@ -657,7 +984,7 @@ export class FlatTagView extends ItemView {
 		const filteredTags = await this.getFilteredTagsAsync();
 		if (currentRenderId !== this.renderId) return;
 
-		this.tagContainer.empty();
+		this.recycleDOM();
 
 		const pinned = new Map<string, number>();
 		const normal = new Map<string, number>();
@@ -668,9 +995,14 @@ export class FlatTagView extends ItemView {
 			else normal.set(tag, count);
 		});
 
+
 		if (pinned.size > 0) {
 			const pinContainer = this.tagContainer.createDiv({ cls: "flat-tag-pinned-section" });
-			const pinnedIcon = pinContainer.createSpan({ cls: "flat-tag-letter" });
+
+			let pinnedIcon = this.headerPool.pop();
+			if (!pinnedIcon) pinnedIcon = document.createElement("span");
+			pinnedIcon.className = "flat-tag-letter";
+			pinContainer.appendChild(pinnedIcon);
 			setIcon(pinnedIcon, "pin");
 
 			let sortedPinned = Array.from(pinned.entries());
@@ -694,17 +1026,19 @@ export class FlatTagView extends ItemView {
 			}
 
 			sortedPinned.forEach(([tag, count]) => {
-				this.createTagElement(tag, count, pinContainer);
+					this.createTagElement(tag, count, pinContainer);
 			});
 
-			this.tagContainer.createDiv({ cls: "flat-tag-separator" });
+			let sep = this.headerPool.pop();
+			if (!sep) sep = document.createElement("div");
+			sep.className = "flat-tag-separator";
+			this.tagContainer.appendChild(sep);
 		}
 
 		let sortedTags = Array.from(normal.entries());
 
 		if (this.currentSort === "az") {
 			const collator = new Intl.Collator("pl", { numeric: true, sensitivity: "base" });
-
 			sortedTags.sort((a, b) => {
 				const charA = Array.from(a[0])[0] || "";
 				const charB = Array.from(b[0])[0] || "";
@@ -716,37 +1050,42 @@ export class FlatTagView extends ItemView {
 
 				return collator.compare(a[0], b[0]);
 			});
-
-			let currentHeader = "";
-
-			for (const [tag, count] of sortedTags) {
-				const firstChar = (Array.from(tag)[0] || "").toUpperCase();
-				const isLetter = /^\p{L}$/u.test(firstChar);
-				const headerToUse = isLetter ? firstChar : "OTHER";
-
-				if (headerToUse !== currentHeader) {
-					currentHeader = headerToUse;
-					if (currentHeader !== "OTHER") {
-						const letterEl = this.tagContainer.createSpan({ cls: "flat-tag-letter" });
-						letterEl.setText(currentHeader);
-					}
-				}
-
-				this.createTagElement(tag, count, this.tagContainer);
-			}
 		} else {
 			sortedTags.sort((a, b) => {
 				if (b[1] !== a[1]) return b[1] - a[1];
 				return a[0].localeCompare(b[0], "pl");
 			});
-
-			sortedTags.forEach(([tag, count]) => {
-				this.createTagElement(tag, count, this.tagContainer);
-			});
 		}
+
+				let currentHeaderState = "";
+		sortedTags.forEach(([tag, count]) => {
+			if (this.currentSort === "az") {
+				const firstChar = (Array.from(tag)[0] || "").toUpperCase();
+				const isLetter = /^\p{L}$/u.test(firstChar);
+				const headerToUse = isLetter ? firstChar : "OTHER";
+
+				if (headerToUse !== currentHeaderState) {
+					currentHeaderState = headerToUse;
+					if (currentHeaderState !== "OTHER") {
+						let letterEl = this.headerPool.pop();
+						if (!letterEl) letterEl = document.createElement("span");
+						letterEl.className = "flat-tag-letter";
+						letterEl.textContent = currentHeaderState;
+						this.tagContainer.appendChild(letterEl);
+					}
+				}
+			}
+
+			this.createTagElement(tag, count, this.tagContainer);
+		});
+
+		// Wait for Obsidian's workspace hydrator to finish layout and painting
+		window.setTimeout(() => {
+			this.updateVisibleShortcuts();
+		}, 50);
 	}
 
-	private scrollHeaderToOneThird(letter: string) {
+		private scrollHeaderToOneThird(letter: string) {
 		const container = this.tagContainer;
 		if (!container) return;
 
@@ -769,47 +1108,54 @@ export class FlatTagView extends ItemView {
 		});
 	}
 
-	private createTagElement(tag: string, count: number, parentEl: HTMLElement) {
-		const tagEl = parentEl.createSpan({ cls: "flat-tag" });
-
-		if (this.selectedTags.has(tag)) {
-			tagEl.addClass("flat-tag-selected");
-		} else if (this.excludedTags.has(tag)) {
-			tagEl.addClass("flat-tag-excluded");
+		private createTagElement(tag: string, count: number, parentEl: HTMLElement) {
+		let tagEl = this.tagPool.pop();
+		if (!tagEl) {
+			tagEl = document.createElement("span");
+			tagEl.className = "flat-tag";
 		}
+
+		if (this.selectedTags.has(tag)) tagEl.classList.add("flat-tag-selected");
+		else if (this.excludedTags.has(tag)) tagEl.classList.add("flat-tag-excluded");
 
 		if (this.plugin.settings.pinnedTags?.includes(tag)) {
-			tagEl.addClass("flat-tag-pinned");
+			tagEl.classList.add("flat-tag-pinned");
 		}
 
-        let symbol = "";
-        if (this.searchMode === "line") symbol = "ℓ";
-        else if (this.searchMode === "task") symbol = "τ";
-        else if (this.searchMode === "task-todo") symbol = "☐";
-        else if (this.searchMode === "task-done") symbol = "✓";
+		let symbol = "";
+		if (this.searchMode === "line") symbol = "ℓ";
+		else if (this.searchMode === "task") symbol = "τ";
+		else if (this.searchMode === "task-todo") symbol = "☐";
+		else if (this.searchMode === "task-done") symbol = "✓";
 
-        // 1. Clear the element just in case
-        tagEl.empty();
-        
-        // 2. Add the tag name safely
-        tagEl.appendText(tag + " ");
+		tagEl.textContent = tag + " ";
 
-        // 3. Create the count span safely
-        const countSpan = tagEl.createSpan({ cls: "ftv-count" });
+		const countSpan = document.createElement("span");
+		countSpan.className = "ftv-count";
 
-        if (symbol) {
-            countSpan.appendText(`(${count}`);
-            countSpan.createSpan({ cls: "ftv-mode-mark", text: symbol });
-            countSpan.appendText(`)`);
-        } else {
-            countSpan.appendText(`(${count})`);
-        }
+		if (symbol) {
+			countSpan.textContent = `(${count}`;
+			const mark = document.createElement("span");
+			mark.className = "ftv-mode-mark";
+			mark.textContent = symbol;
+			countSpan.appendChild(mark);
+			countSpan.appendChild(document.createTextNode(")"));
+		} else {
+			countSpan.textContent = `(${count})`;
+		}
 
-        tagEl.style.userSelect = "none";
-        tagEl.style.webkitUserSelect = "none";
-        tagEl.dataset.tag = tag;
+		// Pre-create an empty badge span that will be populated by the scroll watcher
+		const badgeSpan = document.createElement("span");
+		badgeSpan.className = "ftv-shortcut-badge";
+		countSpan.appendChild(badgeSpan);
 
+		tagEl.style.userSelect = "none";
+		tagEl.style.webkitUserSelect = "none";
+		tagEl.dataset.tag = tag;
+		tagEl.appendChild(countSpan);
+		parentEl.appendChild(tagEl);
 	}
+
 
 	private getTagElFromTarget(target: EventTarget | null): HTMLElement | null {
 		if (!(target instanceof Element)) return null;
@@ -878,6 +1224,12 @@ export class FlatTagView extends ItemView {
 		} else {
 			tagEl.removeClass("flat-tag-selected");
 			tagEl.removeClass("flat-tag-excluded");
+		}
+
+		if (!this.isSearchSticky) {
+			this.tagSearchText = "";
+			const searchInput = this.container.querySelector(".flat-tag-search-input") as HTMLInputElement | null;
+			if (searchInput) searchInput.value = "";
 		}
 
 		void this.renderTags();
@@ -1201,6 +1553,12 @@ export class FlatTagView extends ItemView {
 
 		this.selectedTags.delete(tag);
 		this.excludedTags.delete(tag);
+		if (!this.isSearchSticky) {
+			this.tagSearchText = "";
+			const searchInput = this.container.querySelector(".flat-tag-search-input") as HTMLInputElement | null;
+			if (searchInput) searchInput.value = "";
+		}
+
 		void this.renderTags();
 		void this.updateSearch();
 	}
@@ -1354,107 +1712,96 @@ export class FlatTagView extends ItemView {
 		);
 	}
 
-	private async getFilteredTagsAsync(): Promise<Map<string, number>> {
+		private async getFilteredTagsAsync(): Promise<Map<string, number>> {
 		let filtered = new Map<string, number>();
 
 		const selectedArr = Array.from(this.selectedTags);
 		const excludedArr = Array.from(this.excludedTags);
-		const matchingFiles: string[] = [];
-
-		this.tagIndex.tagsByFile.forEach((tagsArr, filePath) => {
-			if (!this.fileInScope(filePath)) return;
-			if (selectedArr.every((t) => tagsArr.includes(t))) matchingFiles.push(filePath);
-		});
-
 		const useLineLevel = this.searchMode !== "note";
 
 		if (!useLineLevel) {
-			if (this.selectedTags.size === 0 && !this.scopesOn) {
-				filtered = new Map(this.tagIndex.allTags);
-			} else {
-				for (const filePath of matchingFiles) {
-					const tags = this.tagIndex.tagsByFile.get(filePath);
-					if (!tags) continue;
-
-					for (const t of tags) {
-						filtered.set(t, (filtered.get(t) || 0) + 1);
-					}
-				}
-			}
+			this.initWorker();
+			const msgId = ++this.workerMsgId;
+			filtered = await new Promise<Map<string, number>>((resolve) => {
+				this.workerResolvers.set(msgId, resolve);
+				this.filterWorker!.postMessage({
+					msgId,
+					tagsByFile: this.tagIndex.tagsByFile,
+					allTags: this.tagIndex.allTags,
+					selectedArr,
+					excludedArr,
+					scopesOn: this.scopesOn,
+					scopes: this.plugin.settings.scopes,
+					activeScopeId: this.activeScopeId
+				});
+			});
 		} else {
-            // Line and Task Modes -> JIT Cache Parsing
+			// Line and Task Modes -> JIT Cache Parsing on Main Thread
+			const matchingFiles: string[] = [];
+			this.tagIndex.tagsByFile.forEach((tagsArr, filePath) => {
+				if (!this.fileInScope(filePath)) return;
+				if (selectedArr.every((t) => tagsArr.includes(t))) matchingFiles.push(filePath);
+			});
+
 			for (const filePath of matchingFiles) {
 				const file = this.app.vault.getAbstractFileByPath(filePath);
 				if (!(file instanceof TFile)) continue;
 
 				const cache = this.app.metadataCache.getFileCache(file);
-                if (!cache) continue; // Rely entirely on Obsidian cache
+				if (!cache) continue;
 
-                // 1. Group tags by line number
-                const lineTags: Record<number, string[]> = {};
+				const lineTags: Record<number, string[]> = {};
+				cache.tags?.forEach(t => {
+					const line = t.position.start.line;
+					const cleanTag = this.tagIndex.normalizeTag(t.tag);
+					if (!cleanTag || cleanTag.startsWith("%")) return;
 
-                cache.tags?.forEach(t => {
-                    const line = t.position.start.line;
-                    const cleanTag = this.tagIndex.normalizeTag(t.tag);
-                    if (!cleanTag || cleanTag.startsWith("%")) return;
+					if (!lineTags[line]) lineTags[line] = [];
+					if (!lineTags[line].includes(cleanTag)) lineTags[line].push(cleanTag);
+				});
 
-                    if (!lineTags[line]) lineTags[line] = [];
-                    if (!lineTags[line].includes(cleanTag)) lineTags[line].push(cleanTag);
-                });
+				const fmTags = this.tagIndex.extractFrontmatterTags(cache);
+				if (fmTags.length > 0) {
+					if (!lineTags[0]) lineTags[0] = [];
+					fmTags.forEach(t => {
+						if (!lineTags[0].includes(t)) lineTags[0].push(t);
+					});
+				}
 
-                // Add frontmatter tags to line 0 (or a special bucket if you prefer)
-                // so they can be filtered. Or we can just consider them file-level and match with line 0.
-                const fmTags = this.tagIndex.extractFrontmatterTags(cache);
-                if (fmTags.length > 0) {
-                    if (!lineTags[0]) lineTags[0] = [];
-                    fmTags.forEach(t => {
-                        if (!lineTags[0].includes(t)) lineTags[0].push(t);
-                    });
-                }
+				const taskLines: Record<number, string> = {};
+				if (this.searchMode !== "line") {
+					cache.listItems?.forEach(item => {
+						if (item.task !== undefined) {
+							taskLines[item.position.start.line] = String(item.task);
+						}
+					});
+				}
 
-                // 2. Identify Task statuses per line
-                const taskLines: Record<number, string> = {};
-                if (this.searchMode !== "line") {
-                    cache.listItems?.forEach(item => {
-                        if (item.task !== undefined) {
-                            taskLines[item.position.start.line] = String(item.task);
-                        }
-                    });
-                }
+				for (const lineStr of Object.keys(lineTags)) {
+					const line = Number(lineStr);
+					const tagsOnThisLine = lineTags[line];
 
-                // 3. Filter line by line
-                for (const lineStr of Object.keys(lineTags)) {
-                    const line = Number(lineStr);
-                    const tagsOnThisLine = lineTags[line];
+					if (!selectedArr.every(sel => tagsOnThisLine.some(t => t.toLowerCase() === sel.toLowerCase()))) continue;
+					if (excludedArr.some(exc => tagsOnThisLine.some(t => t.toLowerCase() === exc.toLowerCase()))) continue;
 
-                    // Selected tags check
-                    if (!selectedArr.every(sel => tagsOnThisLine.some(t => t.toLowerCase() === sel.toLowerCase()))) continue;
+					if (this.searchMode !== "line") {
+						const taskStatus = taskLines[line];
+						if (taskStatus === undefined) continue;
 
-                    // Excluded tags check
-                    if (excludedArr.some(exc => tagsOnThisLine.some(t => t.toLowerCase() === exc.toLowerCase()))) continue;
+						if (this.searchMode === "task-todo" && taskStatus !== " ") continue;
+						if (this.searchMode === "task-done" && taskStatus === " ") continue;
+					}
 
-                    // Task Check
-                    if (this.searchMode !== "line") {
-                        const taskStatus = taskLines[line];
-                        if (taskStatus === undefined) continue; // Not a task
-
-                        if (this.searchMode === "task-todo" && taskStatus !== " ") continue;
-                        if (this.searchMode === "task-done" && taskStatus === " ") continue;
-                        // "task" (all) just needs taskStatus !== undefined which is already checked
-                    }
-
-                    // Survived filtering! Add tags to the filtered map
-                    for (const t of tagsOnThisLine) {
-                        filtered.set(t, (filtered.get(t) || 0) + 1);
-                    }
-                }
+					for (const t of tagsOnThisLine) {
+						filtered.set(t, (filtered.get(t) || 0) + 1);
+					}
+				}
 			}
 		}
 
+		// Apply global fallbacks and cutoffs
 		for (const t of this.selectedTags) {
 			if (!filtered.has(t)) {
-				// Fall back to global count ONLY if we are in standard Note mode AND Scopes are OFF.
-				// If a Scope is active, or a strict Mode is active, and the tag didn't survive filtering, its count is 0.
 				const count = (this.searchMode === "note" && !this.scopesOn) 
 					? (this.tagIndex.allTags.get(t) || 0) 
 					: 0;
@@ -1470,7 +1817,6 @@ export class FlatTagView extends ItemView {
 				filtered.set(t, count);
 			}
 		}
-
 
 		const cutoffEnabled = this.plugin.settings.frequencyCutoffEnabled ?? false;
 		const cutoff = cutoffEnabled ? (this.plugin.settings.frequencyCutoff ?? 0) : 0;
@@ -1736,6 +2082,7 @@ export class FlatTagView extends ItemView {
 		if (searchBox) {
 			searchBox.value = "";
 			this.tagSearchText = "";
+			this.isSearchSticky = false;
 			void this.renderTags();
 		}
 	}
@@ -2268,3 +2615,4 @@ export class FlatTagView extends ItemView {
 		box.style.visibility = "visible";
 	}
 }
+

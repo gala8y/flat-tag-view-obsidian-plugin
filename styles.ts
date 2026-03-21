@@ -1,4 +1,5 @@
 
+
 export const getStyles = (): string => {
     return `
 .workspace-split.mod-root .view-content.flat-tag-view {
@@ -307,9 +308,11 @@ export const getStyles = (): string => {
     line-height: 1.5em;
     padding: 8px;
     width: 100%;
+    position: relative;
 }
 
 .flat-tag {
+    position: relative;
     display: inline-block;
     padding: 2px 6px;
     margin: 2px;
@@ -610,7 +613,52 @@ body.theme-dark .flat-tag-search-input:not(:focus):not(:placeholder-shown) {
 }
 
 
+/* Make sure the count span can hold our absolute badge */
+.ftv-count {
+    position: relative;
+}
+
+.ftv-shortcut-badge {
+    position: absolute;
+    /* Pushes it up into the empty air above the gap */
+    top: -75%;       
+    
+    /* Pulls it slightly to the left, exactly over the space between the text and the count */
+    left: -10px;     
+    
+    font-size: 0.90em;
+    font-weight: 700;
+    font-family: var(--font-monospace);
+    color: var(--text-faint); /*faint-muted*/ 
+    background: transparent;
+    text-shadow: 0px 1px 2px var(--background-modifier-box-shadow);
+    padding: 0;
+    z-index: 10;
+    pointer-events: none;
+    user-select: none;
+    opacity: 0.8;
+    transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+/* Red warning color when the tag is already selected */
+.flat-tag-selected .ftv-shortcut-badge {
+    color: var(--text-error);
+    opacity: 1;
+}
+
+/* When the spacebar toggles shortcuts off, hide the badges smoothly */
+.ftv-shortcuts-disabled .ftv-shortcut-badge {
+    opacity: 0 !important;
+    pointer-events: none;
+}
+
+
+
+
+
     `;
 };
+
+
 
 

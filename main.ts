@@ -1,4 +1,5 @@
 
+
 import {
 	Editor,
 	EditorPosition,
@@ -846,11 +847,14 @@ export default class FlatTagPlugin extends Plugin {
 			const lead = this.parseLeadingTags(lineText);
 			const next = this.sortTags([...lead.tags, tagToken]);
 			const newLine = this.buildLineWithLeading(lead.indent, next, lead.after);
+			const oldCursor = editor.getCursor();
+			const lengthDiff = newLine.length - lineText.length;
 			editor.replaceRange(
 				newLine,
 				{ line, ch: 0 },
 				{ line, ch: lineText.length }
 			);
+			editor.setCursor({ line: oldCursor.line, ch: Math.max(0, oldCursor.ch + lengthDiff) });
 			return;
 		}
 
@@ -864,11 +868,14 @@ export default class FlatTagPlugin extends Plugin {
 			split.trailingWs
 		);
 
+		const oldCursor = editor.getCursor();
+		const lengthDiff = newLine.length - lineText.length;
 		editor.replaceRange(
 			newLine,
 			{ line, ch: 0 },
 			{ line, ch: lineText.length }
 		);
+		editor.setCursor({ line: oldCursor.line, ch: Math.max(0, oldCursor.ch + lengthDiff) });
 	}
 
 	private async removeTag(editor: Editor, candidate: Candidate) {
@@ -908,11 +915,14 @@ export default class FlatTagPlugin extends Plugin {
 					(t) => t.replace(/^#/, "").toLowerCase() !== key
 				);
 				const newLine = this.buildLineWithLeading(lead.indent, kept, lead.after);
+				const oldCursor = editor.getCursor();
+				const lengthDiff = newLine.length - lineText.length;
 				editor.replaceRange(
 					newLine,
 					{ line, ch: 0 },
 					{ line, ch: lineText.length }
 				);
+				if (oldCursor.line === line) editor.setCursor({ line: oldCursor.line, ch: Math.max(0, oldCursor.ch + lengthDiff) });
 				return;
 			}
 		}
@@ -929,11 +939,14 @@ export default class FlatTagPlugin extends Plugin {
 					split.blockId,
 					split.trailingWs
 				);
+				const oldCursor = editor.getCursor();
+				const lengthDiff = newLine.length - lineText.length;
 				editor.replaceRange(
 					newLine,
 					{ line, ch: 0 },
 					{ line, ch: lineText.length }
 				);
+				if (oldCursor.line === line) editor.setCursor({ line: oldCursor.line, ch: Math.max(0, oldCursor.ch + lengthDiff) });
 				return;
 			}
 		}
@@ -1118,5 +1131,7 @@ export default class FlatTagPlugin extends Plugin {
 		document.head.appendChild(this.styleEl);
 	}
 }
+
+
 
 

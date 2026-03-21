@@ -1,5 +1,6 @@
 
 
+
 import { App } from "obsidian";
 import type FlatTagPlugin from "./main";
 
@@ -83,4 +84,6 @@ export class ScopeManager {
         return scopeQuery || null;
     }
 }
+
+
 

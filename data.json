@@ -1,6 +1,8 @@
 {
-  "pinnedTags": [],
-  "frequencyCutoff": 6,
+  "pinnedTags": [
+    "3rdLayer"
+  ],
+  "frequencyCutoff": 5,
   "frequencyCutoffEnabled": false,
   "altClickTagMode": "end-line",
   "showPlacementInStatusBar": true,
@@ -8,7 +10,26 @@
   "mobileLongPressMs": 1000,
   "popupSortMode": "newest",
   "popupResultCount": "max",
-  "scopes": [],
+  "scopes": [
+    {
+      "id": "1773968778385",
+      "name": "scope1",
+      "folders": [
+        {
+          "path": "folder_A",
+          "included": true
+        },
+        {
+          "path": "folder_A/subfolder_AA",
+          "included": false
+        },
+        {
+          "path": "folder_B",
+          "included": true
+        }
+      ]
+    }
+  ],
   "scopesOn": false,
-  "lastScopeId": null
+  "lastScopeId": "1773968778385"
 }

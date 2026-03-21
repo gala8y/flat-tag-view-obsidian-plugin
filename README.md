@@ -2,7 +2,7 @@
 
 Displays tags in a flat, space-separated format with multi-select filtering, sorting, and search integration.
 
-![flat-tag-view-buttons](./flat-tag-view-see-me.png)
+![flat-tag-view-see-me](./flat-tag-view-see-me.png)
 
 ## Flat Tag View Pane / Main features
 
@@ -11,6 +11,7 @@ Displays tags in a flat, space-separated format with multi-select filtering, sor
 - Pin / Unpin commonly accessed tags to/from top of the view with `Alt-click`
 - **Modes:** `Note` / `Line` / `Tasks-All` / `Tasks-Todo` / `Tasks-Done`
 - **Visual Mode Indicators:** Tags display superscripts based on context (`ℓ`, `τ`, `☐`, `✓`).
+- **Keyboard-centric navigation:** - search for and select tags using only keyboard
 - **Scopes:** Preconfigure include/exclude folder rules and toggle them from a dropdown menu.
 - Sort tags `A-Z` or `By usage`
 - Setting to hide infrequently used tags (`Frequency cutoff`)
@@ -62,9 +63,17 @@ Scopes allow you to create preconfigured sets of folders to instantly narrow dow
 - **Fast Switching:** Click the Scopes text in the FTV pane to open a dropdown menu and instantly switch between scopes. 
 
 
-### On-Tag Mouse Hover Pop-ups
+### Tag Shortcut Indexes
 
-![flat-tag-view-popups](./ftv-popups-v1.png)
+When the FTV pane is focused, visible tags are assigned live numeric index badges. Press the corresponding number(s) to instantly toggle that tag and filter. Tags are numbered 1, 2, 3… based on their current visible position on screen, recalculated on every filter, search, or scroll.
+
+Single digit (1–9): fires after a 400ms pause, giving you time to type a second digit.
+Multi-digit (12, 99…): type digits in quick succession within the 400ms window to target higher-numbered tags. The timer resets with each keystroke.
+0: hard reset — clears both the active tag selection and the search box in one keystroke.
+Space: toggles shortcut index mode on/off (hides/shows all badges). Useful when you need to search for digits in tag's name.
+
+
+### On-Tag Mouse Hover Pop-ups
 
 Switch `CapsLock` on or press and hold `Shift` while hovering over any tag in the FTV pane to instantly view a list of files containing that tag. The popup allows you to quickly open files (or `Shift-click` to open in a new tab) and includes inline controls to change sorting (A-Z vs. Newest modified) and the number of displayed results (5 / 10 / 20 / max). List is filtered as per current selection of tags. Setting sort and number of displayed files is persistent.
 
@@ -174,7 +183,7 @@ You do not need to manually click the search box to filter tags.
 ---
 
 ## _vibe coded w/ ai_
-This is code was written with use of multiple LLMs.
+This code was written with use of multiple LLMs.
 
 ## License
 This software is licensed under the [MIT License](./LICENSE).
@@ -183,12 +192,22 @@ This software is licensed under the [MIT License](./LICENSE).
 Flat Tag View - Where Tags Become First-Class Citizens. _Notes become secondary._
 
 possibly / maybe / planned:
+- high: main functions on/off switches in settings
+- high/fix: erratic cursor jumps on tag creation/removal in editor
 - high/fix: on mobile tags from ftv are not always properly sent to search pane
 - high/fix: on mobile selected tags do not always get background highlight immediately
 - mid: some way to temporarily bypass obsidian exluded folders
-- mid: cursor jumps to start of line on tag creation/removal in editor
 - low: recency of tags in use (?)
 - no: virtualization of pane view
+
+
+# ver. 0.7.0 changelog
+- architecture: replaced per-render full DOM destruction with a pooled span recycler (speed improvements)
+- architecture: moved note-mode vault filtering off the main thread into a web worker (ui stays responsive on 10k+ note vaults)
+- added: tag shortcut indexes for keyboard-centric navigation
+	- added: use space to escape and return to shortcuts to allow searching for digits in tag search
+- added: clear tag search when number of selected tags changes
+- added: clear tag selection and tag search with 0 when outside tag search box
 
 # ver. 0.6.1 changelog
 - fixed: task-modes files pop-up lists too many files

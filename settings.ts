@@ -1,4 +1,5 @@
 
+
 import { App, PluginSettingTab, Setting, AbstractInputSuggest, TFolder, setIcon, Modal, ExtraButtonComponent } from "obsidian";
 import FlatTagPlugin from "./main";
 
@@ -349,5 +350,7 @@ export class FlatTagSettingTab extends PluginSettingTab {
         }
     }
 }
+
+
 
 

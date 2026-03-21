@@ -1,5 +1,6 @@
 
 
+
 import { App, Modal } from "obsidian";
 
 export class HelpModal extends Modal {
@@ -28,6 +29,8 @@ export class HelpModal extends Modal {
         this.contentEl.empty();
     }
 }
+
+
 
 
 

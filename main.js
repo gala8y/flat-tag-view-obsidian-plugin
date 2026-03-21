@@ -260,12 +260,92 @@ var GlobalMuteConfirmModal = class extends import_obsidian.Modal {
     this.contentEl.empty();
   }
 };
+var filterWorkerCode = `
+self.onmessage = function(e) {
+    const { msgId, tagsByFile, allTags, selectedArr, excludedArr, scopesOn, scopes, activeScopeId } = e.data;
+
+    const fileInScope = (filePath) => {
+        if (!scopesOn) return true;
+        const activeScope = scopes && scopes.length > 0 ? (scopes.find((s) => s.id === activeScopeId) || scopes[0]) : null;
+        if (!activeScope || !activeScope.folders || activeScope.folders.length === 0) return true;
+
+        let included = false;
+        let hasInclusions = false;
+
+        const inFolder = (fp, folderPath) => {
+            if (folderPath === "/") return !fp.includes("/");
+            if (folderPath === "") return true;
+            const normalized = folderPath.endsWith("/") ? folderPath.slice(0, -1) : folderPath;
+            return fp.startsWith(normalized + "/") || fp === normalized;
+        };
+
+        for (let i = 0; i < activeScope.folders.length; i++) {
+            const folder = activeScope.folders[i];
+            if (!folder.included) {
+                if (inFolder(filePath, folder.path)) return false;
+            } else {
+                hasInclusions = true;
+                if (inFolder(filePath, folder.path)) included = true;
+            }
+        }
+
+        if (included) return true;
+        if (!hasInclusions) return true;
+        return false;
+    };
+
+    const matchingFiles = [];
+
+    tagsByFile.forEach((tagsArr, filePath) => {
+        if (!fileInScope(filePath)) return;
+
+        let matchesSelected = true;
+        for (let i = 0; i < selectedArr.length; i++) {
+            if (!tagsArr.includes(selectedArr[i])) {
+                matchesSelected = false;
+                break;
+            }
+        }
+
+        if (matchesSelected) matchingFiles.push(filePath);
+    });
+
+    let filtered = new Map();
+    if (selectedArr.length === 0 && !scopesOn) {
+        filtered = new Map(allTags);
+    } else {
+        for (let i = 0; i < matchingFiles.length; i++) {
+            const tags = tagsByFile.get(matchingFiles[i]);
+            if (!tags) continue;
+            for (let j = 0; j < tags.length; j++) {
+                const t = tags[j];
+                filtered.set(t, (filtered.get(t) || 0) + 1);
+            }
+        }
+    }
+
+    self.postMessage({ msgId, filteredTags: filtered });
+};
+`;
 var FlatTagView = class extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.selectedTags = /* @__PURE__ */ new Set();
     this.excludedTags = /* @__PURE__ */ new Set();
     this.currentSort = "az";
+    this.shortcutBuffer = "";
+    // Web Worker properties
+    this.filterWorker = null;
+    this.workerResolvers = /* @__PURE__ */ new Map();
+    this.workerMsgId = 0;
+    // Optimization properties
+    this.tagPool = [];
+    this.headerPool = [];
+    this.resizeObserver = null;
+    this.scrollTimeout = null;
+    this.visibleTagsRegistry = [];
+    this.shortcutTimeout = null;
+    this.shortcutsEnabled = true;
     this.searchMode = "note";
     this.tagSearchText = "";
     this.scopesOn = false;
@@ -300,6 +380,114 @@ var FlatTagView = class extends import_obsidian.ItemView {
     this.plugin = plugin;
     this.tagIndex = TagIndex.getInstance(plugin.app);
     this.containerEl.addClass("flat-tag-view");
+  }
+  initWorker() {
+    if (this.filterWorker)
+      return;
+    const blob = new Blob([filterWorkerCode], { type: "application/javascript" });
+    this.filterWorker = new Worker(URL.createObjectURL(blob));
+    this.filterWorker.onmessage = (e) => {
+      const { msgId, filteredTags } = e.data;
+      const resolver = this.workerResolvers.get(msgId);
+      if (resolver) {
+        resolver(filteredTags);
+        this.workerResolvers.delete(msgId);
+      }
+    };
+  }
+  updateVisibleShortcuts() {
+    if (!this.shortcutsEnabled)
+      return;
+    const container = this.tagContainer;
+    if (!container)
+      return;
+    if (container.clientHeight === 0) {
+      window.setTimeout(() => this.updateVisibleShortcuts(), 100);
+      return;
+    }
+    const pinnedContainer = container.querySelector(".flat-tag-pinned-section");
+    const pinnedTags = pinnedContainer ? Array.from(pinnedContainer.querySelectorAll(".flat-tag")) : [];
+    const normalTags = Array.from(container.querySelectorAll(".flat-tag:not(.flat-tag-pinned)"));
+    const cRect = container.getBoundingClientRect();
+    const pinnedRect = pinnedContainer ? pinnedContainer.getBoundingClientRect() : null;
+    const effectiveTop = pinnedRect ? pinnedRect.bottom : cRect.top;
+    const effectiveBottom = cRect.bottom;
+    this.visibleTagsRegistry.forEach((el) => {
+      const badge = el.querySelector(".ftv-shortcut-badge");
+      if (badge)
+        badge.textContent = "";
+      el.dataset.shortcut = "";
+    });
+    this.visibleTagsRegistry = [];
+    let shortcutIndex = 1;
+    for (const el of pinnedTags) {
+      const badge = el.querySelector(".ftv-shortcut-badge");
+      if (badge) {
+        const label = String(shortcutIndex);
+        badge.textContent = label;
+        el.dataset.shortcut = String(shortcutIndex);
+        this.visibleTagsRegistry.push(el);
+        shortcutIndex++;
+      }
+    }
+    if (normalTags.length > 0) {
+      let low = 0;
+      let high = normalTags.length - 1;
+      let startIndex = 0;
+      while (low <= high) {
+        const mid = Math.floor((low + high) / 2);
+        const el = normalTags[mid];
+        const rect = el.getBoundingClientRect();
+        if (rect.bottom >= effectiveTop && rect.top <= effectiveBottom) {
+          startIndex = mid;
+          high = mid - 1;
+        } else if (rect.top > effectiveBottom) {
+          high = mid - 1;
+        } else {
+          low = mid + 1;
+        }
+      }
+      for (let i = startIndex; i < normalTags.length; i++) {
+        const el = normalTags[i];
+        const rect = el.getBoundingClientRect();
+        if (rect.top > effectiveBottom + 100)
+          break;
+        if (rect.bottom < effectiveTop)
+          continue;
+        const badge = el.querySelector(".ftv-shortcut-badge");
+        if (badge) {
+          const label = String(shortcutIndex);
+          badge.textContent = label;
+          el.dataset.shortcut = String(shortcutIndex);
+          this.visibleTagsRegistry.push(el);
+          shortcutIndex++;
+        }
+      }
+    }
+    if (shortcutIndex > 100) {
+      this.visibleTagsRegistry.forEach((el) => {
+        const num = parseInt(el.dataset.shortcut || "0");
+        const badge = el.querySelector(".ftv-shortcut-badge");
+        if (badge)
+          badge.textContent = String(num);
+      });
+    } else {
+    }
+  }
+  recycleDOM() {
+    while (this.tagContainer.firstChild) {
+      const child = this.tagContainer.firstChild;
+      this.tagContainer.removeChild(child);
+      if (child.hasClass("flat-tag")) {
+        child.className = "flat-tag";
+        child.textContent = "";
+        this.tagPool.push(child);
+      } else if (child.hasClass("flat-tag-letter") || child.hasClass("flat-tag-separator")) {
+        child.className = "";
+        child.textContent = "";
+        this.headerPool.push(child);
+      }
+    }
   }
   getViewType() {
     return VIEW_TYPE;
@@ -498,6 +686,21 @@ var FlatTagView = class extends import_obsidian.ItemView {
     });
     this.notelineBtn.addEventListener("click", () => this.toggleNoteLineMode());
     this.tagContainer = this.container.createDiv({ cls: "flat-tag-list" });
+    this.tagContainer.addEventListener("scroll", () => {
+      if (this.scrollTimeout)
+        window.clearTimeout(this.scrollTimeout);
+      this.scrollTimeout = window.setTimeout(() => {
+        this.updateVisibleShortcuts();
+      }, 100);
+    });
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.scrollTimeout)
+        window.clearTimeout(this.scrollTimeout);
+      this.scrollTimeout = window.setTimeout(() => {
+        this.updateVisibleShortcuts();
+      }, 100);
+    });
+    this.resizeObserver.observe(this.tagContainer);
     this.initDelegatedListeners();
     const bottomContainer = this.container.createDiv({ cls: "flat-tag-bottom-container" });
     const searchSection = bottomContainer.createDiv({ cls: "flat-tag-search-section" });
@@ -515,6 +718,7 @@ var FlatTagView = class extends import_obsidian.ItemView {
       var _a;
       const target = e.target;
       this.tagSearchText = (_a = target.value) != null ? _a : "";
+      this.isSearchSticky = true;
       void this.renderTags();
     });
     searchBox.addEventListener("keydown", (e) => {
@@ -582,17 +786,95 @@ var FlatTagView = class extends import_obsidian.ItemView {
         ws.setActiveLeaf(prev, { focus: true });
     });
     this.registerDomEvent(document, "keydown", (evt) => {
-      var _a, _b, _c, _d;
+      var _a, _b, _c, _d, _e, _f;
       if (((_a = this.app.workspace.activeLeaf) == null ? void 0 : _a.view) !== this)
         return;
       const t = evt.target;
-      if (t && t.closest("input, textarea, [contenteditable='true']"))
+      const isInput = !!(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable));
+      if (isInput) {
+        if (evt.key === "Escape") {
+          const searchInput = this.container.querySelector(".flat-tag-search-input");
+          const hasText = this.tagSearchText.length > 0 || searchInput && searchInput.value.length > 0;
+          if (hasText) {
+            evt.preventDefault();
+            evt.stopPropagation();
+            this.clearSearchBox();
+            this.app.workspace.setActiveLeaf(this.leaf, { focus: true });
+          }
+        }
         return;
+      }
+      if (evt.key === "Escape") {
+        const searchInput = this.container.querySelector(".flat-tag-search-input");
+        const hasText = this.tagSearchText.length > 0 || searchInput && searchInput.value.length > 0;
+        if (hasText) {
+          evt.preventDefault();
+          evt.stopPropagation();
+          this.clearSearchBox();
+          this.app.workspace.setActiveLeaf(this.leaf, { focus: true });
+        }
+        return;
+      }
+      if (this.shortcutsEnabled && !evt.ctrlKey && !evt.metaKey && !evt.altKey && /^[0-9]$/.test(evt.key)) {
+        evt.preventDefault();
+        this.shortcutBuffer += evt.key;
+        if (this.shortcutTimeout)
+          window.clearTimeout(this.shortcutTimeout);
+        this.shortcutTimeout = window.setTimeout(() => {
+          const targetIndex = parseInt(this.shortcutBuffer, 10);
+          this.shortcutBuffer = "";
+          if (targetIndex === 0) {
+            this.tagSearchText = "";
+            const searchInput = this.container.querySelector(".flat-tag-search-input");
+            if (searchInput)
+              searchInput.value = "";
+            this.selectedTags.clear();
+            this.excludedTags.clear();
+            void this.renderTags();
+            void this.updateSearch();
+            return;
+          }
+          if (targetIndex > 0) {
+            const targetEl = this.visibleTagsRegistry.find((el) => el.dataset.shortcut === String(targetIndex));
+            if (targetEl) {
+              const tag = targetEl.dataset.tag;
+              if (tag) {
+                void this.handleTagInteraction(tag, targetEl, true, false, false);
+              }
+            }
+          }
+        }, 400);
+        return;
+      }
+      if (evt.key === " ") {
+        evt.preventDefault();
+        this.shortcutsEnabled = !this.shortcutsEnabled;
+        if (this.shortcutTimeout)
+          window.clearTimeout(this.shortcutTimeout);
+        this.shortcutBuffer = "";
+        if (!this.shortcutsEnabled) {
+          (_b = this.tagContainer) == null ? void 0 : _b.addClass("ftv-shortcuts-disabled");
+          this.visibleTagsRegistry.forEach((el) => {
+            const badge = el.querySelector(".ftv-shortcut-badge");
+            if (badge)
+              badge.textContent = "";
+          });
+        } else {
+          (_c = this.tagContainer) == null ? void 0 : _c.removeClass("ftv-shortcuts-disabled");
+          this.updateVisibleShortcuts();
+        }
+        return;
+      }
+      if (evt.key.length === 1 && /[^\s"'`\]\[{}()=+\\|,<.>!?:;*&^@#%]/.test(evt.key)) {
+        this.shortcutBuffer = "";
+        if (this.shortcutTimeout)
+          window.clearTimeout(this.shortcutTimeout);
+      }
       if (evt.ctrlKey || evt.metaKey || evt.altKey)
         return;
       if (evt.shiftKey && (evt.code === "Digit1" || evt.code === "Numpad1")) {
         evt.preventDefault();
-        (_b = this.tagContainer) == null ? void 0 : _b.scrollTo({ top: 0, behavior: "instant" });
+        (_d = this.tagContainer) == null ? void 0 : _d.scrollTo({ top: 0, behavior: "instant" });
         return;
       }
       if (evt.shiftKey && (evt.code === "Digit0" || evt.code === "Numpad0")) {
@@ -606,7 +888,7 @@ var FlatTagView = class extends import_obsidian.ItemView {
         });
         return;
       }
-      const caps = (_d = (_c = evt.getModifierState) == null ? void 0 : _c.call(evt, "CapsLock")) != null ? _d : false;
+      const caps = (_f = (_e = evt.getModifierState) == null ? void 0 : _e.call(evt, "CapsLock")) != null ? _f : false;
       if (evt.shiftKey || caps) {
         if (evt.key.length !== 1)
           return;
@@ -618,6 +900,11 @@ var FlatTagView = class extends import_obsidian.ItemView {
         return;
       }
       if (evt.key === "Backspace") {
+        if (this.shortcutBuffer.length > 0) {
+          evt.preventDefault();
+          this.shortcutBuffer = this.shortcutBuffer.slice(0, -1);
+          return;
+        }
         evt.preventDefault();
         if (this.tagSearchText.length > 0) {
           this.tagSearchText = this.tagSearchText.slice(0, -1);
@@ -630,19 +917,11 @@ var FlatTagView = class extends import_obsidian.ItemView {
         }
         return;
       }
-      if (evt.key === "Escape") {
-        if (this.tagSearchText.length > 0) {
-          evt.preventDefault();
-          evt.stopPropagation();
-          this.clearSearchBox();
-          this.app.workspace.setActiveLeaf(this.leaf, { focus: true });
-        }
-        return;
-      }
       if (evt.key.length === 1) {
-        if (/[^\\s"'`\]\[{}()=+\\|,<.>!?:;*&^@#%]/.test(evt.key)) {
+        if (/[^\s"'`\]\[{}()=+\\|,<.>!?:;*&^@#%]/.test(evt.key)) {
           evt.preventDefault();
           this.tagSearchText += evt.key;
+          this.isSearchSticky = false;
           const searchInput = this.container.querySelector(
             ".flat-tag-search-input"
           );
@@ -737,6 +1016,8 @@ var FlatTagView = class extends import_obsidian.ItemView {
     );
   }
   async onClose() {
+    if (this.resizeObserver)
+      this.resizeObserver.disconnect();
     this.tagIndex.onUpdate.delete(this.renderTagsCallback);
     this.clearHoverPreview();
     this.closeHelpPopup();
@@ -754,7 +1035,7 @@ var FlatTagView = class extends import_obsidian.ItemView {
     const filteredTags = await this.getFilteredTagsAsync();
     if (currentRenderId !== this.renderId)
       return;
-    this.tagContainer.empty();
+    this.recycleDOM();
     const pinned = /* @__PURE__ */ new Map();
     const normal = /* @__PURE__ */ new Map();
     const pinnedSet = new Set((_a = this.plugin.settings.pinnedTags) != null ? _a : []);
@@ -766,7 +1047,11 @@ var FlatTagView = class extends import_obsidian.ItemView {
     });
     if (pinned.size > 0) {
       const pinContainer = this.tagContainer.createDiv({ cls: "flat-tag-pinned-section" });
-      const pinnedIcon = pinContainer.createSpan({ cls: "flat-tag-letter" });
+      let pinnedIcon = this.headerPool.pop();
+      if (!pinnedIcon)
+        pinnedIcon = document.createElement("span");
+      pinnedIcon.className = "flat-tag-letter";
+      pinContainer.appendChild(pinnedIcon);
       (0, import_obsidian.setIcon)(pinnedIcon, "pin");
       let sortedPinned = Array.from(pinned.entries());
       if (this.currentSort === "az") {
@@ -792,7 +1077,11 @@ var FlatTagView = class extends import_obsidian.ItemView {
       sortedPinned.forEach(([tag, count]) => {
         this.createTagElement(tag, count, pinContainer);
       });
-      this.tagContainer.createDiv({ cls: "flat-tag-separator" });
+      let sep = this.headerPool.pop();
+      if (!sep)
+        sep = document.createElement("div");
+      sep.className = "flat-tag-separator";
+      this.tagContainer.appendChild(sep);
     }
     let sortedTags = Array.from(normal.entries());
     if (this.currentSort === "az") {
@@ -808,30 +1097,36 @@ var FlatTagView = class extends import_obsidian.ItemView {
           return 1;
         return collator.compare(a[0], b[0]);
       });
-      let currentHeader = "";
-      for (const [tag, count] of sortedTags) {
-        const firstChar = (Array.from(tag)[0] || "").toUpperCase();
-        const isLetter = /^\p{L}$/u.test(firstChar);
-        const headerToUse = isLetter ? firstChar : "OTHER";
-        if (headerToUse !== currentHeader) {
-          currentHeader = headerToUse;
-          if (currentHeader !== "OTHER") {
-            const letterEl = this.tagContainer.createSpan({ cls: "flat-tag-letter" });
-            letterEl.setText(currentHeader);
-          }
-        }
-        this.createTagElement(tag, count, this.tagContainer);
-      }
     } else {
       sortedTags.sort((a, b) => {
         if (b[1] !== a[1])
           return b[1] - a[1];
         return a[0].localeCompare(b[0], "pl");
       });
-      sortedTags.forEach(([tag, count]) => {
-        this.createTagElement(tag, count, this.tagContainer);
-      });
     }
+    let currentHeaderState = "";
+    sortedTags.forEach(([tag, count]) => {
+      if (this.currentSort === "az") {
+        const firstChar = (Array.from(tag)[0] || "").toUpperCase();
+        const isLetter = /^\p{L}$/u.test(firstChar);
+        const headerToUse = isLetter ? firstChar : "OTHER";
+        if (headerToUse !== currentHeaderState) {
+          currentHeaderState = headerToUse;
+          if (currentHeaderState !== "OTHER") {
+            let letterEl = this.headerPool.pop();
+            if (!letterEl)
+              letterEl = document.createElement("span");
+            letterEl.className = "flat-tag-letter";
+            letterEl.textContent = currentHeaderState;
+            this.tagContainer.appendChild(letterEl);
+          }
+        }
+      }
+      this.createTagElement(tag, count, this.tagContainer);
+    });
+    window.setTimeout(() => {
+      this.updateVisibleShortcuts();
+    }, 50);
   }
   scrollHeaderToOneThird(letter) {
     const container = this.tagContainer;
@@ -858,14 +1153,17 @@ var FlatTagView = class extends import_obsidian.ItemView {
   }
   createTagElement(tag, count, parentEl) {
     var _a;
-    const tagEl = parentEl.createSpan({ cls: "flat-tag" });
-    if (this.selectedTags.has(tag)) {
-      tagEl.addClass("flat-tag-selected");
-    } else if (this.excludedTags.has(tag)) {
-      tagEl.addClass("flat-tag-excluded");
+    let tagEl = this.tagPool.pop();
+    if (!tagEl) {
+      tagEl = document.createElement("span");
+      tagEl.className = "flat-tag";
     }
+    if (this.selectedTags.has(tag))
+      tagEl.classList.add("flat-tag-selected");
+    else if (this.excludedTags.has(tag))
+      tagEl.classList.add("flat-tag-excluded");
     if ((_a = this.plugin.settings.pinnedTags) == null ? void 0 : _a.includes(tag)) {
-      tagEl.addClass("flat-tag-pinned");
+      tagEl.classList.add("flat-tag-pinned");
     }
     let symbol = "";
     if (this.searchMode === "line")
@@ -876,19 +1174,27 @@ var FlatTagView = class extends import_obsidian.ItemView {
       symbol = "\u2610";
     else if (this.searchMode === "task-done")
       symbol = "\u2713";
-    tagEl.empty();
-    tagEl.appendText(tag + " ");
-    const countSpan = tagEl.createSpan({ cls: "ftv-count" });
+    tagEl.textContent = tag + " ";
+    const countSpan = document.createElement("span");
+    countSpan.className = "ftv-count";
     if (symbol) {
-      countSpan.appendText(`(${count}`);
-      countSpan.createSpan({ cls: "ftv-mode-mark", text: symbol });
-      countSpan.appendText(`)`);
+      countSpan.textContent = `(${count}`;
+      const mark = document.createElement("span");
+      mark.className = "ftv-mode-mark";
+      mark.textContent = symbol;
+      countSpan.appendChild(mark);
+      countSpan.appendChild(document.createTextNode(")"));
     } else {
-      countSpan.appendText(`(${count})`);
+      countSpan.textContent = `(${count})`;
     }
+    const badgeSpan = document.createElement("span");
+    badgeSpan.className = "ftv-shortcut-badge";
+    countSpan.appendChild(badgeSpan);
     tagEl.style.userSelect = "none";
     tagEl.style.webkitUserSelect = "none";
     tagEl.dataset.tag = tag;
+    tagEl.appendChild(countSpan);
+    parentEl.appendChild(tagEl);
   }
   getTagElFromTarget(target) {
     if (!(target instanceof Element))
@@ -948,6 +1254,12 @@ var FlatTagView = class extends import_obsidian.ItemView {
     } else {
       tagEl.removeClass("flat-tag-selected");
       tagEl.removeClass("flat-tag-excluded");
+    }
+    if (!this.isSearchSticky) {
+      this.tagSearchText = "";
+      const searchInput = this.container.querySelector(".flat-tag-search-input");
+      if (searchInput)
+        searchInput.value = "";
     }
     void this.renderTags();
     void this.updateSearch();
@@ -1217,6 +1529,12 @@ var FlatTagView = class extends import_obsidian.ItemView {
     new import_obsidian.Notice(`Success! Replaced #${tag} with #${targetTagWord} in ${filesModified} files.`);
     this.selectedTags.delete(tag);
     this.excludedTags.delete(tag);
+    if (!this.isSearchSticky) {
+      this.tagSearchText = "";
+      const searchInput = this.container.querySelector(".flat-tag-search-input");
+      if (searchInput)
+        searchInput.value = "";
+    }
     void this.renderTags();
     void this.updateSearch();
   }
@@ -1351,28 +1669,31 @@ var FlatTagView = class extends import_obsidian.ItemView {
     let filtered = /* @__PURE__ */ new Map();
     const selectedArr = Array.from(this.selectedTags);
     const excludedArr = Array.from(this.excludedTags);
-    const matchingFiles = [];
-    this.tagIndex.tagsByFile.forEach((tagsArr, filePath) => {
-      if (!this.fileInScope(filePath))
-        return;
-      if (selectedArr.every((t) => tagsArr.includes(t)))
-        matchingFiles.push(filePath);
-    });
     const useLineLevel = this.searchMode !== "note";
     if (!useLineLevel) {
-      if (this.selectedTags.size === 0 && !this.scopesOn) {
-        filtered = new Map(this.tagIndex.allTags);
-      } else {
-        for (const filePath of matchingFiles) {
-          const tags = this.tagIndex.tagsByFile.get(filePath);
-          if (!tags)
-            continue;
-          for (const t of tags) {
-            filtered.set(t, (filtered.get(t) || 0) + 1);
-          }
-        }
-      }
+      this.initWorker();
+      const msgId = ++this.workerMsgId;
+      filtered = await new Promise((resolve) => {
+        this.workerResolvers.set(msgId, resolve);
+        this.filterWorker.postMessage({
+          msgId,
+          tagsByFile: this.tagIndex.tagsByFile,
+          allTags: this.tagIndex.allTags,
+          selectedArr,
+          excludedArr,
+          scopesOn: this.scopesOn,
+          scopes: this.plugin.settings.scopes,
+          activeScopeId: this.activeScopeId
+        });
+      });
     } else {
+      const matchingFiles = [];
+      this.tagIndex.tagsByFile.forEach((tagsArr, filePath) => {
+        if (!this.fileInScope(filePath))
+          return;
+        if (selectedArr.every((t) => tagsArr.includes(t)))
+          matchingFiles.push(filePath);
+      });
       for (const filePath of matchingFiles) {
         const file = this.app.vault.getAbstractFileByPath(filePath);
         if (!(file instanceof import_obsidian.TFile))
@@ -1653,6 +1974,7 @@ var FlatTagView = class extends import_obsidian.ItemView {
     if (searchBox) {
       searchBox.value = "";
       this.tagSearchText = "";
+      this.isSearchSticky = false;
       void this.renderTags();
     }
   }
@@ -2409,9 +2731,11 @@ var getStyles = () => {
     line-height: 1.5em;
     padding: 8px;
     width: 100%;
+    position: relative;
 }
 
 .flat-tag {
+    position: relative;
     display: inline-block;
     padding: 2px 6px;
     margin: 2px;
@@ -2710,6 +3034,49 @@ body.theme-dark .flat-tag-search-input:not(:focus):not(:placeholder-shown) {
     opacity: 0.8;
     line-height: 0;
 }
+
+
+/* Make sure the count span can hold our absolute badge */
+.ftv-count {
+    position: relative;
+}
+
+.ftv-shortcut-badge {
+    position: absolute;
+    /* Pushes it up into the empty air above the gap */
+    top: -75%;       
+    
+    /* Pulls it slightly to the left, exactly over the space between the text and the count */
+    left: -10px;     
+    
+    font-size: 0.90em;
+    font-weight: 700;
+    font-family: var(--font-monospace);
+    color: var(--text-faint); /*faint-muted*/ 
+    background: transparent;
+    text-shadow: 0px 1px 2px var(--background-modifier-box-shadow);
+    padding: 0;
+    z-index: 10;
+    pointer-events: none;
+    user-select: none;
+    opacity: 0.8;
+    transition: opacity 0.15s ease, color 0.15s ease;
+}
+
+/* Red warning color when the tag is already selected */
+.flat-tag-selected .ftv-shortcut-badge {
+    color: var(--text-error);
+    opacity: 1;
+}
+
+/* When the spacebar toggles shortcuts off, hide the badges smoothly */
+.ftv-shortcuts-disabled .ftv-shortcut-badge {
+    opacity: 0 !important;
+    pointer-events: none;
+}
+
+
+
 
 
     `;
@@ -3647,11 +4014,14 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
       const lead = this.parseLeadingTags(lineText);
       const next2 = this.sortTags([...lead.tags, tagToken]);
       const newLine2 = this.buildLineWithLeading(lead.indent, next2, lead.after);
+      const oldCursor2 = editor.getCursor();
+      const lengthDiff2 = newLine2.length - lineText.length;
       editor.replaceRange(
         newLine2,
         { line, ch: 0 },
         { line, ch: lineText.length }
       );
+      editor.setCursor({ line: oldCursor2.line, ch: Math.max(0, oldCursor2.ch + lengthDiff2) });
       return;
     }
     const split = this.splitBlockIdSuffix(lineText);
@@ -3663,11 +4033,14 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
       split.blockId,
       split.trailingWs
     );
+    const oldCursor = editor.getCursor();
+    const lengthDiff = newLine.length - lineText.length;
     editor.replaceRange(
       newLine,
       { line, ch: 0 },
       { line, ch: lineText.length }
     );
+    editor.setCursor({ line: oldCursor.line, ch: Math.max(0, oldCursor.ch + lengthDiff) });
   }
   async removeTag(editor, candidate) {
     var _a, _b, _c, _d, _e, _f;
@@ -3698,11 +4071,15 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
           (t) => t.replace(/^#/, "").toLowerCase() !== key
         );
         const newLine = this.buildLineWithLeading(lead.indent, kept, lead.after);
+        const oldCursor = editor.getCursor();
+        const lengthDiff = newLine.length - lineText.length;
         editor.replaceRange(
           newLine,
           { line, ch: 0 },
           { line, ch: lineText.length }
         );
+        if (oldCursor.line === line)
+          editor.setCursor({ line: oldCursor.line, ch: Math.max(0, oldCursor.ch + lengthDiff) });
         return;
       }
     }
@@ -3718,11 +4095,15 @@ var FlatTagPlugin = class extends import_obsidian3.Plugin {
           split.blockId,
           split.trailingWs
         );
+        const oldCursor = editor.getCursor();
+        const lengthDiff = newLine.length - lineText.length;
         editor.replaceRange(
           newLine,
           { line, ch: 0 },
           { line, ch: lineText.length }
         );
+        if (oldCursor.line === line)
+          editor.setCursor({ line: oldCursor.line, ch: Math.max(0, oldCursor.ch + lengthDiff) });
         return;
       }
     }

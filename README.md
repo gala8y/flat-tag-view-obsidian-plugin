@@ -182,11 +182,11 @@ You do not need to manually click the search box to filter tags.
 
 ---
 
-## _vibe coded w/ ai_
-This code was written with use of multiple LLMs.
-
 ## License
 This software is licensed under the [MIT License](./LICENSE).
+
+## _vibe coded w/ ai_
+This code was written with use of multiple LLMs.
 
 ### roadmap
 Flat Tag View - Where Tags Become First-Class Citizens. _Notes become secondary._

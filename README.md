@@ -261,11 +261,11 @@ possibly / maybe / planned:
 
 ### ver. 0.3.0 changelog
 - added: tag insertion and deletion
-- alt-click tag insertion in editor (sol / inp / eol modes)
-- modes: start of line, in place, end of line
-- auto-detection: alt-click on existing \#tag removes it, on plain word creates it
-- tag insertion preserves ^block-id suffix when placing tags at end of line
-- newly inserted tags are sorted alphabetically with existing leading/trailing tags
+	- alt-click tag insertion in editor (sol / inp / eol modes)
+	- modes: start of line, in place, end of line
+	- auto-detection: alt-click on existing \#tag removes it, on plain word creates it
+	- tag insertion preserves ^block-id suffix when placing tags at end of line
+	- newly inserted tags are sorted alphabetically with existing leading/trailing tags
 - added: status bar indicator showing current tag placement mode (sol / inp / eol)
 - added: "show placement in status bar" toggle in settings
 - added: "cycle tag placement" hotkey command

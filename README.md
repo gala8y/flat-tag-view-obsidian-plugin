@@ -201,7 +201,7 @@ possibly / maybe / planned:
 - no: virtualization of pane view
 
 
-# ver. 0.7.0 changelog
+### ver. 0.7.0 changelog
 - architecture: replaced per-render full DOM destruction with a pooled span recycler (speed improvements)
 - architecture: moved note-mode vault filtering off the main thread into a web worker (ui stays responsive on 10k+ note vaults)
 - added: tag shortcut indexes for keyboard-centric navigation
@@ -209,7 +209,7 @@ possibly / maybe / planned:
 - added: clear tag search when number of selected tags changes
 - added: clear tag selection and tag search with 0 when outside tag search box
 
-# ver. 0.6.1 changelog
+### ver. 0.6.1 changelog
 - fixed: task-modes files pop-up lists too many files
 
 ### ver. 0.6.0 changelog
